@@ -204,8 +204,10 @@ func TestAnalyzeFile_Python_HardcodedSecret(t *testing.T) {
 			rule:    "mcp-hardcoded-secret",
 		},
 		{
+			// Use a non-placeholder AWS key value — AKIAIOSFODNN7EXAMPLE is a
+			// well-known documentation example and is correctly filtered by Fix 1.
 			name:    "aws key",
-			content: `key = "AKIAIOSFODNN7EXAMPLE"`,
+			content: `key = "AKIAABCDEFGHIJKLMNOP"`,
 			rule:    "mcp-hardcoded-aws-key",
 		},
 		{
@@ -240,13 +242,15 @@ func TestAnalyzeFile_JS_ChildProcessExec(t *testing.T) {
 		ext     string
 	}{
 		{
+			// Fix 4: flagged only when arg contains concatenation
 			name:    "exec js",
-			content: "const result = child_process.exec(userCmd, callback);\n",
+			content: "const result = child_process.exec('ls ' + userCmd, callback);\n",
 			ext:     ".js",
 		},
 		{
+			// Fix 4: flagged only when arg contains concatenation
 			name:    "execSync ts",
-			content: "const output = child_process.execSync(cmd);\n",
+			content: "const output = child_process.execSync('cmd ' + arg);\n",
 			ext:     ".ts",
 		},
 	}
@@ -284,7 +288,9 @@ const data = fs.readFileSync(baseDir + userPath);
 
 func TestAnalyzeFile_TS_HardcodedSecret(t *testing.T) {
 	dir := t.TempDir()
-	content := `const apiKey = "AKIAIOSFODNN7EXAMPLE";`
+	// Fix 1: AKIAIOSFODNN7EXAMPLE contains "EXAMPLE" and is filtered as a placeholder.
+	// Use a non-placeholder value instead.
+	content := `const apiKey = "AKIAABCDEFGHIJKLMNOP";`
 	path := writeTempFile(t, dir, "config.ts", content)
 	s := newSAST(t)
 	findings := s.AnalyzeFile(path, LangTypeScript)
@@ -295,9 +301,11 @@ func TestAnalyzeFile_TS_HardcodedSecret(t *testing.T) {
 
 func TestAnalyzeFile_Go_HardcodedSecret(t *testing.T) {
 	dir := t.TempDir()
+	// Fix 1: AKIAIOSFODNN7EXAMPLE contains "EXAMPLE" and is filtered as a placeholder.
+	// Use a non-placeholder value instead.
 	content := `package main
 
-const apiKey = "AKIAIOSFODNN7EXAMPLE"
+const apiKey = "AKIAABCDEFGHIJKLMNOP"
 `
 	path := writeTempFile(t, dir, "main.go", content)
 	s := newSAST(t)
@@ -416,7 +424,8 @@ func TestAnalyzeDirectory_MultipleFiles(t *testing.T) {
 	dir := t.TempDir()
 
 	writeTempFile(t, dir, "server.py", "os.popen(user_input)\n")
-	writeTempFile(t, dir, "app.js", "child_process.exec(cmd);\n")
+	// Fix 4: exec must have concatenation to be flagged as cmd-injection
+	writeTempFile(t, dir, "app.js", "child_process.exec('ls ' + cmd);\n")
 	writeTempFile(t, dir, "safe.go", "package main\nfunc main() {}\n")
 
 	s := newSAST(t)
@@ -803,7 +812,8 @@ func TestAnalyzeFile_Python_OsRemove(t *testing.T) {
 
 func TestAnalyzeFile_JS_ChildProcessExecSync(t *testing.T) {
 	dir := t.TempDir()
-	content := "const out = child_process.execSync(cmd);\n"
+	// Fix 4: must contain string concatenation or template literal to be flagged.
+	content := "const out = child_process.execSync('base ' + cmd);\n"
 	path := writeTempFile(t, dir, "run.js", content)
 	s := newSAST(t)
 	findings := s.AnalyzeFile(path, LangJavaScript)
@@ -1642,5 +1652,472 @@ data = pickle.loads(raw_bytes)
 	f := requireFinding(t, findings, "mcp-unsafe-deserialization")
 	if f.CWE != "CWE-502" {
 		t.Errorf("expected CWE-502 on mcp-unsafe-deserialization, got %q", f.CWE)
+	}
+}
+
+// ── Fix 1: Placeholder secret exclusion ──────────────────────────────────────
+
+func TestIsPlaceholderSecret(t *testing.T) {
+	tests := []struct {
+		value string
+		want  bool
+	}{
+		{"your_api_key_here", true},
+		{"your-secret", true},
+		{"example_token", true},
+		{"sample_password", true},
+		{"dummy_value", true},
+		{"placeholder", true},
+		{"changeme", true},
+		{"xxxxxxxxxxxxxxxxxxxxx", true},
+		{"yyyyy", true},
+		{"zzzzz", true},
+		{"insert_token", true},
+		{"replace_key", true},
+		{"token_here", true},
+		{"todo_fixme", true},
+		{"fixme", true},
+		{"<your_token>", true},
+		{"{your_key}", true},
+		// Real-looking values should NOT match
+		{"AKIAABCDEFGHIJKLMNOP", false},
+		{"sk-abcdefghijklmnopqrstuvwxyz", false},
+		{"SuperSecret1234567890", false},
+		{"ghp_" + strings.Repeat("b", 36), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.value, func(t *testing.T) {
+			got := isPlaceholderSecret(tt.value)
+			if got != tt.want {
+				t.Errorf("isPlaceholderSecret(%q) = %v, want %v", tt.value, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAnalyzeFile_PlaceholderSecretNotFlagged(t *testing.T) {
+	dir := t.TempDir()
+	tests := []struct {
+		name    string
+		content string
+		rule    string
+	}{
+		{
+			name:    "placeholder api_key",
+			content: `api_key = "your_api_key_here"`,
+			rule:    "mcp-hardcoded-secret",
+		},
+		{
+			name:    "example aws key in docs",
+			content: `key = "AKIAIOSFODNN7EXAMPLE"`,
+			rule:    "mcp-hardcoded-aws-key",
+		},
+		{
+			name:    "changeme password",
+			content: `password = "changeme_password_here"`,
+			rule:    "mcp-hardcoded-secret",
+		},
+	}
+
+	s := newSAST(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeTempFile(t, dir, tt.name+".py", tt.content)
+			findings := s.AnalyzeFile(path, LangPython)
+			requireNoFinding(t, findings, tt.rule)
+		})
+	}
+}
+
+// ── Fix 2: Constant self-assignment exclusion ─────────────────────────────────
+
+func TestExtractKeyValue(t *testing.T) {
+	tests := []struct {
+		line      string
+		wantKey   string
+		wantValue string
+	}{
+		{`API_KEY = "API_KEY"`, "API_KEY", "API_KEY"},
+		{`token = 'TOKEN'`, "token", "TOKEN"},
+		{`password: "realpassword"`, "password", "realpassword"},
+		{"no match here", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.line, func(t *testing.T) {
+			k, v := extractKeyValue(tt.line)
+			if k != tt.wantKey || v != tt.wantValue {
+				t.Errorf("extractKeyValue(%q) = (%q, %q), want (%q, %q)", tt.line, k, v, tt.wantKey, tt.wantValue)
+			}
+		})
+	}
+}
+
+func TestIsSelfAssignedSecret(t *testing.T) {
+	tests := []struct {
+		line string
+		want bool
+	}{
+		{`API_KEY = "API_KEY"`, true},
+		{`TOKEN = 'TOKEN'`, true},
+		{`secret = "secret"`, true},
+		{`api_key = "actual_secret_value123"`, false},
+		{`password = "SuperSecret1234567890"`, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.line, func(t *testing.T) {
+			got := isSelfAssignedSecret(tt.line)
+			if got != tt.want {
+				t.Errorf("isSelfAssignedSecret(%q) = %v, want %v", tt.line, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAnalyzeFile_SelfAssignedSecretNotFlagged(t *testing.T) {
+	dir := t.TempDir()
+	// SOME_NAME = 'SOME_NAME' pattern — value equals key, it's a config placeholder
+	content := `api_key = "api_key"
+password = "PASSWORD"
+TOKEN = "TOKEN"
+`
+	path := writeTempFile(t, dir, "config.py", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangPython)
+	requireNoFinding(t, findings, "mcp-hardcoded-secret")
+}
+
+// ── Fix 3: Comment line skipping ──────────────────────────────────────────────
+
+func TestIsCommentLine(t *testing.T) {
+	tests := []struct {
+		line string
+		lang Language
+		want bool
+	}{
+		// Universal comment prefixes
+		{"// os.popen(cmd)", LangJavaScript, true},
+		{"  // indented comment", LangGo, true},
+		{"/* block comment */", LangTypeScript, true},
+		{" * doc comment line", LangGo, true},
+		{"-- SQL comment", LangPython, true},
+		// Python # comments
+		{"# os.popen(cmd)", LangPython, true},
+		{"  # indented python comment", LangPython, true},
+		// # is NOT a comment in JS/TS/Go
+		{"# shebang-like line", LangJavaScript, false},
+		{"# not a comment in go", LangGo, false},
+		{"# not a comment in ts", LangTypeScript, false},
+		// Non-comment lines
+		{"os.popen(cmd)", LangPython, false},
+		{"child_process.exec(cmd)", LangJavaScript, false},
+		{"", LangGo, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.line+"_"+string(tt.lang), func(t *testing.T) {
+			got := isCommentLine(tt.line, tt.lang)
+			if got != tt.want {
+				t.Errorf("isCommentLine(%q, %v) = %v, want %v", tt.line, tt.lang, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAnalyzeFile_CommentedCodeNotFlagged(t *testing.T) {
+	dir := t.TempDir()
+	tests := []struct {
+		name    string
+		content string
+		lang    Language
+		ext     string
+		rule    string
+	}{
+		{
+			name:    "python comment os.popen",
+			content: "# os.popen(cmd)\nresult = 1\n",
+			lang:    LangPython,
+			ext:     ".py",
+			rule:    "mcp-cmd-injection",
+		},
+		{
+			name:    "js linecomment child_process",
+			content: "// child_process.exec('ls ' + cmd);\nconst x = 1;\n",
+			lang:    LangJavaScript,
+			ext:     ".js",
+			rule:    "mcp-cmd-injection",
+		},
+		{
+			name:    "go block comment exec.Command",
+			content: "/* exec.Command(\"ls\") */\nfunc main() {}\n",
+			lang:    LangGo,
+			ext:     ".go",
+			rule:    "mcp-cmd-injection",
+		},
+	}
+
+	s := newSAST(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeTempFile(t, dir, tt.name+tt.ext, tt.content)
+			findings := s.AnalyzeFile(path, tt.lang)
+			requireNoFinding(t, findings, tt.rule)
+		})
+	}
+}
+
+// ── Fix 4: Bare import detection fix ─────────────────────────────────────────
+
+func TestAnalyzeFile_JS_ChildProcessBareCallNotFlagged(t *testing.T) {
+	dir := t.TempDir()
+	// Bare calls without concatenation or template literals should NOT be flagged.
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{"exec no concat", "const result = child_process.exec(safeStaticCmd, callback);\n"},
+		{"execSync no concat", "const out = child_process.execSync(safeStaticCmd);\n"},
+	}
+	s := newSAST(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeTempFile(t, dir, tt.name+".js", tt.content)
+			findings := s.AnalyzeFile(path, LangJavaScript)
+			// require no CRITICAL cmd-injection finding — bare calls are not flagged
+			for _, f := range findings {
+				if f.Rule == "mcp-cmd-injection" && f.Severity == SeverityCritical {
+					t.Errorf("unexpected CRITICAL cmd-injection finding for bare call %q: %s", tt.content, f.Message)
+				}
+			}
+		})
+	}
+}
+
+func TestAnalyzeFile_JS_ChildProcessWithConcatFlagged(t *testing.T) {
+	dir := t.TempDir()
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{"exec with concat", "child_process.exec('ls ' + userInput);\n"},
+		{"execSync with template", "child_process.execSync(`git clone ${repoUrl}`);\n"},
+	}
+	s := newSAST(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeTempFile(t, dir, tt.name+".js", tt.content)
+			findings := s.AnalyzeFile(path, LangJavaScript)
+			requireFinding(t, findings, "mcp-cmd-injection")
+		})
+	}
+}
+
+func TestAnalyzeFile_JS_ImportDestructure_NotCritical(t *testing.T) {
+	dir := t.TempDir()
+	// `const { execSync } = require('child_process');` — import only, INFO severity
+	content := "const { execSync } = require('child_process');\n"
+	path := writeTempFile(t, dir, "app.js", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangJavaScript)
+	// Should find a rule but at INFO (import only), not CRITICAL
+	f := findingByRule(findings, "mcp-cmd-injection")
+	if f == nil {
+		t.Fatalf("expected an mcp-cmd-injection finding for require('child_process'), got none")
+	}
+	if f.Severity != SeverityInfo {
+		t.Errorf("expected INFO severity for bare import, got %v", f.Severity)
+	}
+}
+
+// ── Fix 5: pkgutil.extend_path exclusion ─────────────────────────────────────
+
+func TestAnalyzeFile_Python_PkgutilExtendPath_NotFlagged(t *testing.T) {
+	dir := t.TempDir()
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{
+			name:    "pkgutil extend_path boilerplate",
+			content: `__path__ = __import__('pkgutil').extend_path(__path__, __name__)` + "\n",
+		},
+		{
+			name:    "pkgutil direct",
+			content: `import pkgutil` + "\n" + `pkgutil.extend_path(__path__, __name__)` + "\n",
+		},
+	}
+	s := newSAST(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeTempFile(t, dir, tt.name+".py", tt.content)
+			findings := s.AnalyzeFile(path, LangPython)
+			requireNoFinding(t, findings, "mcp-dynamic-import")
+		})
+	}
+}
+
+func TestAnalyzeFile_Python_RealDynamicImport_StillFlagged(t *testing.T) {
+	dir := t.TempDir()
+	content := `module = __import__(user_module)` + "\n"
+	path := writeTempFile(t, dir, "loader.py", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangPython)
+	requireFinding(t, findings, "mcp-dynamic-import")
+}
+
+// ── Fix 6: Env var read severity reduction ────────────────────────────────────
+
+func TestAnalyzeFile_JS_EnvVarLeakageToOutput_StillHigh(t *testing.T) {
+	dir := t.TempDir()
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{"return env", "function getKey() { return process.env.API_KEY; }\n"},
+		{"console.log env", "console.log(process.env.SECRET_KEY);\n"},
+		{"res.json env", "res.json({ key: process.env.API_KEY });\n"},
+		{"res.send env", "res.send(process.env.TOKEN);\n"},
+	}
+	s := newSAST(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeTempFile(t, dir, tt.name+".js", tt.content)
+			findings := s.AnalyzeFile(path, LangJavaScript)
+			f := requireFinding(t, findings, "mcp-env-leakage")
+			if f.Severity != SeverityHigh {
+				t.Errorf("expected HIGH severity for env leakage, got %v", f.Severity)
+			}
+		})
+	}
+}
+
+func TestAnalyzeFile_JS_EnvVarConfigRead_IsInfo(t *testing.T) {
+	dir := t.TempDir()
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{"config assignment", "const apiKey = process.env.API_KEY;\n"},
+		{"auth header", "headers.Authorization = `Bearer ${process.env.TOKEN}`;\n"},
+	}
+	s := newSAST(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeTempFile(t, dir, tt.name+".js", tt.content)
+			findings := s.AnalyzeFile(path, LangJavaScript)
+			// Should find mcp-env-read at INFO (not the HIGH leakage rule)
+			f := findingByRule(findings, "mcp-env-read")
+			if f == nil {
+				t.Fatalf("expected mcp-env-read finding for config read, got none")
+			}
+			if f.Severity != SeverityInfo {
+				t.Errorf("expected INFO severity for config env read, got %v", f.Severity)
+			}
+		})
+	}
+}
+
+// ── Fix 7: Temp dir cleanup severity reduction ────────────────────────────────
+
+func TestIsTempDirOperation(t *testing.T) {
+	tests := []struct {
+		line string
+		want bool
+	}{
+		{"shutil.rmtree(tmpdir)", true},
+		{"shutil.rmtree(os.tmpdir())", true},
+		{"fs.rmSync(tempfile.mkdtemp())", true},
+		{"fs.unlinkSync(RUNNER_TEMP + '/file')", true},
+		{"fs.rmSync('/tmp/workdir')", true},
+		{"shutil.rmtree(cache_dir)", true},
+		// Non-temp paths
+		{"shutil.rmtree(user_data_dir)", false},
+		{"fs.unlinkSync(config_path)", false},
+		{"os.RemoveAll(dataDir)", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.line, func(t *testing.T) {
+			got := isTempDirOperation(tt.line)
+			if got != tt.want {
+				t.Errorf("isTempDirOperation(%q) = %v, want %v", tt.line, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAnalyzeFile_DestructiveFS_TempDir_IsInfo(t *testing.T) {
+	dir := t.TempDir()
+	tests := []struct {
+		name    string
+		content string
+		lang    Language
+		ext     string
+	}{
+		{
+			name:    "python rmtree tmpdir",
+			content: "shutil.rmtree(tmpdir)\n",
+			lang:    LangPython,
+			ext:     ".py",
+		},
+		{
+			name:    "js unlinkSync temp",
+			content: "fs.unlinkSync(tempFile);\n",
+			lang:    LangJavaScript,
+			ext:     ".js",
+		},
+		{
+			name:    "go RemoveAll tmp",
+			content: `package main` + "\nimport \"os\"\nfunc clean() { os.RemoveAll(tmpDir) }\n",
+			lang:    LangGo,
+			ext:     ".go",
+		},
+	}
+	s := newSAST(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeTempFile(t, dir, tt.name+tt.ext, tt.content)
+			findings := s.AnalyzeFile(path, tt.lang)
+			f := requireFinding(t, findings, "mcp-destructive-fs")
+			if f.Severity != SeverityInfo {
+				t.Errorf("expected INFO severity for temp-dir deletion, got %v", f.Severity)
+			}
+		})
+	}
+}
+
+func TestAnalyzeFile_DestructiveFS_NonTempDir_IsHigh(t *testing.T) {
+	dir := t.TempDir()
+	tests := []struct {
+		name    string
+		content string
+		lang    Language
+		ext     string
+	}{
+		{
+			name:    "python rmtree user data",
+			content: "shutil.rmtree(user_data_path)\n",
+			lang:    LangPython,
+			ext:     ".py",
+		},
+		{
+			name:    "js unlinkSync config",
+			content: "fs.unlinkSync(configFile);\n",
+			lang:    LangJavaScript,
+			ext:     ".js",
+		},
+	}
+	s := newSAST(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeTempFile(t, dir, tt.name+tt.ext, tt.content)
+			findings := s.AnalyzeFile(path, tt.lang)
+			f := requireFinding(t, findings, "mcp-destructive-fs")
+			if f.Severity != SeverityHigh {
+				t.Errorf("expected HIGH severity for non-temp deletion, got %v", f.Severity)
+			}
+		})
 	}
 }
