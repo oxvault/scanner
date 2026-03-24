@@ -1,20 +1,31 @@
-.PHONY: build test lint clean scan-demo
+BIN := bin/oxvault
+
+ifeq ($(OS),Windows_NT)
+	BIN := bin/oxvault.exe
+endif
+
+.PHONY: all build run test lint clean scan-demo
+
+all: build test
 
 build:
-	go build -o bin/oxvault ./cmd/
+	@go build -o $(BIN) ./cmd/
+
+run:
+	@go run ./cmd/
 
 test:
-	go test ./...
+	@go test ./... -v
 
 lint:
-	golangci-lint run
+	@golangci-lint run
 
 clean:
-	rm -rf bin/
+	@rm -rf bin/ .oxvault/
 
-scan-demo:
+scan-demo: build
 	@echo "=== Scanning tool-poisoning example ==="
-	./bin/oxvault scan ./examples/vulnerable-servers/tool-poisoning/ --skip-manifest || true
+	@./$(BIN) scan ./examples/vulnerable-servers/tool-poisoning/ --skip-manifest || true
 	@echo ""
 	@echo "=== Scanning cmd-injection example ==="
-	./bin/oxvault scan ./examples/vulnerable-servers/cmd-injection/ --skip-manifest || true
+	@./$(BIN) scan ./examples/vulnerable-servers/cmd-injection/ --skip-manifest || true
