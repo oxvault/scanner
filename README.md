@@ -21,11 +21,11 @@ MCP (Model Context Protocol) is the standard for connecting AI agents (Claude, G
 
 ## Why Oxvault
 
-- **12/12 known MCP CVEs detected** — [validated against real vulnerabilities](testdata/cve/)
-- **0% false positive rate** — [benchmarked against 10 official MCP servers](benchmarks/false-positives/RESULTS.md)
-- **Single binary, zero dependencies** — install and run in seconds
-- **Every finding includes a CWE reference** — enterprise-grade reporting
-- **Works offline** — no cloud API, no telemetry, no account required
+- **12/12 known MCP CVEs detected** - [validated against real vulnerabilities](testdata/cve/)
+- **0% false positive rate** - [benchmarked against 10 official MCP servers](benchmarks/false-positives/RESULTS.md)
+- **Single binary, zero dependencies** - install and run in seconds
+- **Every finding includes a CWE reference** - enterprise-grade reporting
+- **Works offline** - no cloud API, no telemetry, no account required
 
 ## What It Catches
 
@@ -136,17 +136,17 @@ $ oxvault scan ./examples/vulnerable-servers/tool-poisoning --skip-manifest
 
 ### Detect rug pulls (tool description changes)
 
-A server starts clean, gets approved, then silently changes its tool descriptions to steal credentials. This is a real attack — [WhatsApp MCP was exploited this way](https://invariantlabs.ai/blog/whatsapp-mcp-exploited).
+A server starts clean, gets approved, then silently changes its tool descriptions to steal credentials. This is a real attack - [WhatsApp MCP was exploited this way](https://invariantlabs.ai/blog/whatsapp-mcp-exploited).
 
 ```bash
-# Day 1: Server looks clean — pin its tool hashes
+# Day 1: Server looks clean - pin its tool hashes
 $ oxvault pin python3 ./examples/vulnerable-servers/rug-pull/server_v1.py
   ✓ Pinned 2 tools. Hashes saved to .oxvault/pins.json
 
 # Day 30: Server pushes an "update" with hidden exfiltration instructions
 $ oxvault check python3 ./examples/vulnerable-servers/rug-pull/server_v2.py
   ✓ calculate: hash unchanged
-  ✗ get_weather: Tool description or schema changed — possible rug pull
+  ✗ get_weather: Tool description or schema changed - possible rug pull
 
   ⚠ Tool descriptions have changed since last pin.
 ```
@@ -231,7 +231,7 @@ oxvault check <command> [args...]         # Compare against saved hashes
 
 | Metric | Result |
 |---|---|
-| **CVE detection rate** | [12/12 (100%)](testdata/cve/) — validated against real MCP CVEs |
+| **CVE detection rate** | [12/12 (100%)](testdata/cve/) - validated against real MCP CVEs |
 | **False positive rate** | [0% across 10 official MCP servers](benchmarks/false-positives/RESULTS.md) |
 | **DVMCP challenge detection** | [31 findings across 8/10 challenges](benchmarks/competitive/RESULTS.md) |
 | **vs. competitors** | [Feature comparison with mcp-scan, Snyk, Enkrypt, Cisco](benchmarks/competitive/RESULTS.md) |
@@ -260,13 +260,13 @@ make scan-demo   # Build + scan example vulnerable servers
 
 ## Community
 
-- **Discord:** [Join the Oxvault community](https://discord.gg/mysvyvHCX5) — discussion, bug reports, MCP security news
-- **Issues:** [GitHub Issues](https://github.com/oxvault/scanner/issues) — bug reports and feature requests
-- **PRs welcome** — especially new detection rules and CVE test cases
+- **Discord:** [Join the Oxvault community](https://discord.gg/mysvyvHCX5) - discussion, bug reports, MCP security news
+- **Issues:** [GitHub Issues](https://github.com/oxvault/scanner/issues) - bug reports and feature requests
+- **PRs welcome** - especially new detection rules and CVE test cases
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE).
+Apache 2.0 - see [LICENSE](LICENSE).
 
 ---
 
