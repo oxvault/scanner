@@ -19,10 +19,11 @@ type Config struct {
 	PinDir string // Directory for pin storage (default: .oxvault/)
 
 	// Scan options
-	SkipSAST     bool
-	SkipManifest bool
-	SkipEgress   bool
-	ProbeNetwork bool // Run runtime network probe after static scan
+	SkipSAST       bool
+	SkipManifest   bool
+	SkipEgress     bool
+	ProbeNetwork   bool // Run runtime network probe after static scan
+	ShowSuppressed bool // Print suppressed findings in a separate section
 }
 
 // DefaultConfig returns a Config with sensible defaults

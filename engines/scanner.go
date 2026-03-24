@@ -20,10 +20,11 @@ type ScanOptions struct {
 
 // ScanReport holds the results of a scan
 type ScanReport struct {
-	Target   string
-	Package  *providers.ResolvedPackage
-	Tools    []providers.MCPTool
-	Findings []providers.Finding
+	Target     string
+	Package    *providers.ResolvedPackage
+	Tools      []providers.MCPTool
+	Findings   []providers.Finding
+	Suppressed []providers.Finding
 }
 
 // HasSeverity checks if the report contains findings at or above the given severity
@@ -63,6 +64,7 @@ type scanner struct {
 	depAuditor   providers.DepAuditor
 	hookAnalyzer providers.HookAnalyzer
 	reporter     providers.Reporter
+	suppressor   providers.Suppressor
 	netProbe     providers.NetProbe // optional — nil if not wired
 	logger       *slog.Logger
 }
@@ -87,6 +89,14 @@ func NewScanner(
 		reporter:     reporter,
 		logger:       logger,
 	}
+}
+
+// WithSuppressor attaches a Suppressor to an existing ScannerEngine.
+// This is separate from NewScanner to keep the constructor signature stable.
+func WithSuppressor(eng ScannerEngine, sup providers.Suppressor) ScannerEngine {
+	s := eng.(*scanner)
+	s.suppressor = sup
+	return s
 }
 
 // WithNetProbe returns a ScannerEngine with a net probe attached.
@@ -219,6 +229,20 @@ func (s *scanner) Scan(target string, opts ScanOptions) (*ScanReport, error) {
 				report.Findings = append(report.Findings, probeFindings...)
 			}
 		}
+	}
+
+	// Final step: apply suppression rules (.oxvaultignore + inline comments)
+	if s.suppressor != nil && report.Package != nil {
+		if err := s.suppressor.LoadIgnoreFile(report.Package.Path); err != nil {
+			s.logger.Warn("could not load .oxvaultignore", "error", err)
+		}
+		kept, suppressed := s.suppressor.Filter(report.Findings)
+		report.Findings = kept
+		report.Suppressed = suppressed
+		s.logger.Info("suppression applied",
+			"kept", len(kept),
+			"suppressed", len(suppressed),
+		)
 	}
 
 	s.logger.Info("scan complete", "findings", len(report.Findings))

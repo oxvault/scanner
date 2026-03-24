@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/fatih/color"
 	"github.com/oxvault/scanner/app"
@@ -14,36 +15,9 @@ import (
 
 var version = "0.1.0"
 
-const asciiLogo = `
-             *+                                +*
-             +.*                              *.+
-             *..-%                          %=..*
-              +....+%%    %*=:.:=*#%    %%+....+
-                %=.....-*#-.-=*##*=-.-#*-.....-%
-                   %#-.....:*%        %*:...-#%
-                    #+#-....-%        %-...-**#
-                    #.:@%#-..*        #..:*%@:.#
-                    #..%@@@#-#        #-#@@@%..#
-                    %:.#@@@@@@        @@@@@@#.:%
-                    %-.+@@@@@@        @@@@@@+.-%
-                    %+..%@@@@@@      @@@@@@%:.=%
-                     %=..+%@@@@      @@@@%+..=%
-                       %:.:*@@@@    @@@@*:.:#
-                         %*..:#@@  @@#:..*%
-                           *...*%  %#:..*
-                             *:.:+*:.:*%
-                               #:..:#%
-                                 %%
-
-              %%%%  %%  %%  %  %%%  %%  %%%  %%
-              *:+*=:*@%=:*-*@%--@%=-%@%::=%@@=:@@
-              :+@@@=-@@%:.+%@@%:=+:%@%-=%:+@@=:@@
-              #.=*=:#@%-=%-=@@@#..#@%=:#*+.*@#.=+
-               %%%@@@%%@@@%@@@@%%@@@%@@@@%%@@@%%`
-
 func main() {
 	root := &cobra.Command{
-		Use:     "Oxvault",
+		Use:     "oxvault",
 		Short:   "MCP security scanner — detect vulnerabilities in AI tool integrations",
 		Version: version,
 		Run: func(cmd *cobra.Command, args []string) {
@@ -64,13 +38,12 @@ func main() {
 }
 
 func printLogo() {
-	cyan := color.New(color.FgCyan, color.Bold)
 	dim := color.New(color.Faint)
 	bold := color.New(color.Bold)
+	cyan := color.New(color.FgCyan, color.Bold)
 
-	_, _ = cyan.Fprintln(os.Stderr, asciiLogo)
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintf(os.Stderr, "  %s  %s\n",
+	fmt.Fprintf(os.Stderr, "\n  %s %s  %s\n",
+		cyan.Sprint("◉"),
 		bold.Sprint("Oxvault Scanner"),
 		dim.Sprintf("v%s", version))
 	fmt.Fprintf(os.Stderr, "  %s\n\n",
@@ -102,15 +75,16 @@ func printBanner(target string) {
 
 func newScanCmd() *cobra.Command {
 	var (
-		format       string
-		failOn       string
-		verbose      bool
-		skipSAST     bool
-		skipManifest bool
-		skipEgress   bool
-		probeNetwork bool
-		noColor      bool
-		configPath   string
+		format         string
+		failOn         string
+		verbose        bool
+		skipSAST       bool
+		skipManifest   bool
+		skipEgress     bool
+		probeNetwork   bool
+		noColor        bool
+		configPath     string
+		showSuppressed bool
 	)
 
 	cmd := &cobra.Command{
@@ -141,6 +115,7 @@ Config-based scanning:
 			cfg.SkipEgress = skipEgress
 			cfg.ProbeNetwork = probeNetwork
 			cfg.NoColor = noColor
+			cfg.ShowSuppressed = showSuppressed
 
 			// Apply no-color globally before any output
 			if noColor || cfg.OutputFormat != providers.FormatTerminal {
@@ -179,6 +154,7 @@ Config-based scanning:
 	cmd.Flags().BoolVar(&probeNetwork, "probe-network", false, "Spawn server and monitor outbound connections (requires strace on Linux)")
 	cmd.Flags().BoolVar(&noColor, "no-color", false, "Disable color output (for CI or piping)")
 	cmd.Flags().StringVar(&configPath, "config", "", "MCP client config file to scan (path or \"auto\")")
+	cmd.Flags().BoolVar(&showSuppressed, "show-suppressed", false, "Print suppressed findings in a separate section")
 
 	return cmd
 }
@@ -237,10 +213,57 @@ func runSingleScan(application *app.App, cfg *config.Config, opts engines.ScanOp
 
 	fmt.Print(string(output))
 
+	// Print suppressed findings section when requested (terminal format only)
+	if cfg.ShowSuppressed && len(report.Suppressed) > 0 && cfg.OutputFormat == providers.FormatTerminal {
+		printSuppressedSection(report.Suppressed)
+	}
+
+	// Append suppressed count to terminal summary line when some were filtered
+	if len(report.Suppressed) > 0 && cfg.OutputFormat == providers.FormatTerminal {
+		dim := color.New(color.Faint)
+		fmt.Printf("  %s\n\n", dim.Sprintf("(%d suppressed — run with --show-suppressed to view)", len(report.Suppressed)))
+	}
+
 	if report.HasSeverity(cfg.FailOn) {
 		os.Exit(1)
 	}
 	return nil
+}
+
+// printSuppressedSection writes all suppressed findings under a styled header.
+func printSuppressedSection(findings []providers.Finding) {
+	dim := color.New(color.Faint)
+	bold := color.New(color.Bold)
+	header := color.New(color.Bold)
+
+	const totalWidth = 60
+	prefix := "  ── "
+	title := "Suppressed Findings"
+	suffix := " "
+	fill := strings.Repeat("─", totalWidth-len(prefix)-len(title)-len(suffix))
+	fmt.Printf("\n%s\n\n", header.Sprintf("%s%s%s%s", prefix, title, suffix, fill))
+
+	for _, f := range findings {
+		location := ""
+		if f.File != "" {
+			if f.Line > 0 {
+				location = fmt.Sprintf("%s:%d", f.File, f.Line)
+			} else {
+				location = f.File
+			}
+		} else if f.Tool != "" {
+			location = fmt.Sprintf("Tool: %s", f.Tool)
+		}
+		fmt.Printf("  %s %s",
+			dim.Sprint("○"),
+			bold.Sprint(f.Rule),
+		)
+		if location != "" {
+			fmt.Printf(" %s", dim.Sprint(location))
+		}
+		fmt.Println()
+	}
+	fmt.Println()
 }
 
 // runConfigScan handles `oxvault scan --config <path|auto>`.

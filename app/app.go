@@ -29,6 +29,7 @@ type AppInterface interface {
 	GetPinStore() providers.PinStore
 	GetResolver() providers.Resolver
 	GetNetProbe() providers.NetProbe
+	GetSuppressor() providers.Suppressor
 
 	// Init steps
 	InitProviders() error
@@ -52,6 +53,7 @@ type App struct {
 	pinStore     providers.PinStore
 	resolver     providers.Resolver
 	netProbe     providers.NetProbe
+	suppressor   providers.Suppressor
 
 	// Engines
 	scanner engines.ScannerEngine
@@ -95,6 +97,10 @@ func WithResolver(r providers.Resolver) AppOption {
 
 func WithNetProbeOption(p providers.NetProbe) AppOption {
 	return func(a *App) { a.netProbe = p }
+}
+
+func WithSuppressor(s providers.Suppressor) AppOption {
+	return func(a *App) { a.suppressor = s }
 }
 
 func WithLogger(l *slog.Logger) AppOption {
@@ -166,6 +172,9 @@ func (a *App) InitProviders() error {
 	if a.netProbe == nil {
 		a.netProbe = providers.NewNetProbe(a.Logger)
 	}
+	if a.suppressor == nil {
+		a.suppressor = providers.NewSuppressor()
+	}
 	return nil
 }
 
@@ -183,7 +192,9 @@ func (a *App) InitEngines() error {
 			a.Logger,
 		)
 		// Attach the net probe so the scanner can use it when ProbeNetwork is set.
-		a.scanner = engines.WithNetProbe(eng, a.netProbe)
+		eng = engines.WithNetProbe(eng, a.netProbe)
+		// Attach the suppressor so findings can be filtered at the end of Scan.
+		a.scanner = engines.WithSuppressor(eng, a.suppressor)
 	}
 	if a.pinner == nil {
 		a.pinner = engines.NewPinner(
@@ -213,3 +224,4 @@ func (a *App) GetReporter() providers.Reporter           { return a.reporter }
 func (a *App) GetPinStore() providers.PinStore           { return a.pinStore }
 func (a *App) GetResolver() providers.Resolver           { return a.resolver }
 func (a *App) GetNetProbe() providers.NetProbe           { return a.netProbe }
+func (a *App) GetSuppressor() providers.Suppressor       { return a.suppressor }
