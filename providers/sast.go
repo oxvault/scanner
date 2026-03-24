@@ -17,12 +17,130 @@ func NewSASTAnalyzer() SASTAnalyzer {
 
 // sourcePattern represents a pattern to match in source code
 type sourcePattern struct {
-	pattern  *regexp.Regexp
-	rule     string
-	severity Severity
-	message  string
-	langs    []Language
-	cwe      string
+	pattern         *regexp.Regexp
+	rule            string
+	severity        Severity
+	message         string
+	langs           []Language
+	cwe             string
+	isSecretRule    bool         // Fix 1 & 2: enables placeholder/self-assignment exclusions
+	excludePatterns []*regexp.Regexp // Fix 5: skip finding when any exclusion matches the line
+}
+
+// ── Fix 1: Placeholder secret exclusion ──────────────────────────────────────
+
+// placeholderPatterns is a compiled list of patterns that indicate a value is
+// an example or placeholder rather than a real secret.
+var placeholderPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)your[_-]`),
+	regexp.MustCompile(`(?i)example`),
+	regexp.MustCompile(`(?i)sample`),
+	regexp.MustCompile(`(?i)dummy`),
+	regexp.MustCompile(`(?i)placeholder`),
+	regexp.MustCompile(`(?i)changeme`),
+	regexp.MustCompile(`(?i)xxx`),
+	regexp.MustCompile(`(?i)yyy`),
+	regexp.MustCompile(`(?i)zzz`),
+	regexp.MustCompile(`(?i)insert[_-]`),
+	regexp.MustCompile(`(?i)replace[_-]`),
+	regexp.MustCompile(`(?i)_here$`),
+	regexp.MustCompile(`(?i)todo`),
+	regexp.MustCompile(`(?i)fixme`),
+	regexp.MustCompile(`(?i)<your`),
+	regexp.MustCompile(`(?i)\{your`),
+}
+
+// isPlaceholderSecret returns true when value looks like a documentation
+// placeholder rather than a real credential.
+func isPlaceholderSecret(value string) bool {
+	for _, re := range placeholderPatterns {
+		if re.MatchString(value) {
+			return true
+		}
+	}
+	return false
+}
+
+// ── Fix 2: Constant self-assignment exclusion ─────────────────────────────────
+
+// extractKeyValue attempts to extract the key and quoted value from a line
+// like `SOME_NAME = 'SOME_NAME'` or `api_key = "api_key"`.
+// Returns ("", "") when the pattern cannot be identified.
+func extractKeyValue(line string) (key, value string) {
+	// Match: <identifier> <op> <quote><value><quote>
+	re := regexp.MustCompile(`(?i)([A-Z0-9_]+)\s*[:=]+\s*["']([^"']+)["']`)
+	m := re.FindStringSubmatch(line)
+	if len(m) < 3 {
+		return "", ""
+	}
+	return m[1], m[2]
+}
+
+// isSelfAssignedSecret returns true when the value in a secret assignment is
+// identical to its key name (e.g. `TOKEN = "TOKEN"`).
+func isSelfAssignedSecret(line string) bool {
+	key, value := extractKeyValue(line)
+	if key == "" {
+		return false
+	}
+	return strings.EqualFold(key, value)
+}
+
+// ── Fix 3: Comment line detection ────────────────────────────────────────────
+
+// commentOnlyLanguages lists extensions where `#` begins a single-line comment.
+var commentOnlyLanguages = map[Language]bool{
+	LangPython: true,
+}
+
+// isCommentLine returns true when the trimmed line is a comment that should
+// suppress all SAST rules.  The set of comment prefixes is language-aware:
+// `#` is only treated as a comment for Python/Ruby/Shell/YAML/TOML, not for
+// JS/TS/Go (where `#` can appear in shebangs but is not a regular comment).
+func isCommentLine(line string, lang Language) bool {
+	t := strings.TrimSpace(line)
+	if t == "" {
+		return false
+	}
+	// Universal comment prefixes (all supported languages)
+	if strings.HasPrefix(t, "//") ||
+		strings.HasPrefix(t, "/*") ||
+		strings.HasPrefix(t, "*") ||
+		strings.HasPrefix(t, "--") {
+		return true
+	}
+	// `#` is a comment only in Python (and YAML/TOML which we don't scan)
+	if strings.HasPrefix(t, "#") && commentOnlyLanguages[lang] {
+		return true
+	}
+	return false
+}
+
+// ── Fix 7: Temp-dir path detection ───────────────────────────────────────────
+
+// tempDirPatterns detects when a destructive FS operation clearly targets a
+// temporary directory, reducing the severity to INFO.
+// Note: patterns intentionally match as prefixes (tmp, temp, cache) so that
+// variable names like tmpdir, tempDir, cacheDir are also recognized.
+var tempDirPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)tmp`),
+	regexp.MustCompile(`(?i)temp`),
+	regexp.MustCompile(`(?i)cache`),
+	regexp.MustCompile(`os\.tmpdir\s*\(`),
+	regexp.MustCompile(`tempfile`),
+	regexp.MustCompile(`mkdtemp`),
+	regexp.MustCompile(`RUNNER_TEMP`),
+}
+
+// isTempDirOperation returns true when the line's argument clearly references
+// a temporary directory.
+func isTempDirOperation(line string) bool {
+	for _, re := range tempDirPatterns {
+		if re.MatchString(line) {
+			return true
+		}
+	}
+	return false
 }
 
 var sourcePatterns = []sourcePattern{
@@ -82,13 +200,21 @@ var sourcePatterns = []sourcePattern{
 		cwe:      "CWE-94",
 	},
 	{
-		// __import__ — dynamic module import, often used in payloads
+		// __import__ — dynamic module import, often used in payloads.
+		// Fix 5: exclude standard library boilerplate patterns that are benign.
 		pattern:  regexp.MustCompile(`__import__\s*\(`),
 		rule:     "mcp-dynamic-import",
 		severity: SeverityHigh,
 		message:  "Dynamic __import__() call (potential payload execution): %s",
 		langs:    []Language{LangPython},
 		cwe:      "CWE-94",
+		excludePatterns: []*regexp.Regexp{
+			// pkgutil.extend_path boilerplate: __import__('pkgutil').extend_path(...)
+			regexp.MustCompile(`__import__\s*\(\s*['"]pkgutil['"]\s*\)`),
+			regexp.MustCompile(`pkgutil`),
+			// importlib.import_module is standard library, not a payload
+			regexp.MustCompile(`importlib\.import_module`),
+		},
 	},
 
 	// ── Deserialization — Python ──────────────────────────────────────────────
@@ -144,20 +270,25 @@ var sourcePatterns = []sourcePattern{
 
 	// ── Command injection — JavaScript/TypeScript ─────────────────────────────
 
+	// Fix 4: Only flag child_process.exec/execSync when the argument contains
+	// string concatenation (+) or template literals (`), indicating potential
+	// injection.  Bare imports and safe static calls are no longer flagged.
 	{
-		pattern:  regexp.MustCompile(`child_process\.(exec|execSync)\s*\(`),
+		// child_process.exec( or child_process.execSync( with concatenation/template
+		pattern:  regexp.MustCompile("child_process\\.(exec|execSync)\\s*\\([^)]*(?:\\+|`)"),
 		rule:     "mcp-cmd-injection",
 		severity: SeverityCritical,
-		message:  "child_process.exec with potential injection: %s",
+		message:  "child_process.exec with string concatenation/template (injection risk): %s",
 		langs:    []Language{LangJavaScript, LangTypeScript},
 		cwe:      "CWE-78",
 	},
 	{
-		// child_process.execSync standalone import
-		pattern:  regexp.MustCompile(`child_process\.execSync\s*\(`),
+		// exec( / execSync( called directly (imported as named binding) with
+		// concatenation or template literal
+		pattern:  regexp.MustCompile("\\bexecSync?\\s*\\([^)]*(?:\\+|`)"),
 		rule:     "mcp-cmd-injection",
 		severity: SeverityCritical,
-		message:  "child_process.execSync (synchronous shell execution): %s",
+		message:  "execSync with string concatenation/template (injection risk): %s",
 		langs:    []Language{LangJavaScript, LangTypeScript},
 		cwe:      "CWE-78",
 	},
@@ -171,10 +302,11 @@ var sourcePatterns = []sourcePattern{
 		cwe:      "CWE-78",
 	},
 	{
-		// require('child_process') — flag the import itself; egress picks up usage
+		// require('child_process') — reduced to INFO: it's an import, not usage.
+		// Fix 4: bare imports are no longer HIGH; only actual dangerous calls count.
 		pattern:  regexp.MustCompile(`require\s*\(\s*['"]child_process['"]\s*\)`),
 		rule:     "mcp-cmd-injection",
-		severity: SeverityHigh,
+		severity: SeverityInfo,
 		message:  "child_process module imported (verify no unsafe .exec usage): %s",
 		langs:    []Language{LangJavaScript, LangTypeScript},
 		cwe:      "CWE-78",
@@ -223,13 +355,24 @@ var sourcePatterns = []sourcePattern{
 
 	// ── Environment variable leakage — JavaScript/TypeScript ─────────────────
 
+	// Fix 6: HIGH only when env value flows into output (return, res.send, console.log,
+	// string interpolation in tool output, etc.).
 	{
-		// process.env leaked to output — only flag when env var is in a return,
-		// response, console.log, or res.send/json context, not plain config reads
 		pattern:  regexp.MustCompile(`(return|console\.(log|warn|error)|res\.(send|json|write)|\.push|\.join|` + "`" + `).*process\.env\.[A-Z_][A-Z0-9_]*`),
 		rule:     "mcp-env-leakage",
-		severity: SeverityWarning,
+		severity: SeverityHigh,
 		message:  "Environment variable leaked to output/response: %s",
+		langs:    []Language{LangJavaScript, LangTypeScript},
+		cwe:      "CWE-526",
+	},
+	// Fix 6: INFO when process.env is used in a standard config/auth pattern
+	// (assignment to a config variable, auth header construction, path join, etc.)
+	// These are normal usage patterns, not leakage.
+	{
+		pattern:  regexp.MustCompile(`process\.env\.[A-Z_][A-Z0-9_]*`),
+		rule:     "mcp-env-read",
+		severity: SeverityInfo,
+		message:  "Environment variable read (verify it is not exposed to output): %s",
 		langs:    []Language{LangJavaScript, LangTypeScript},
 		cwe:      "CWE-526",
 	},
@@ -363,47 +506,52 @@ var sourcePatterns = []sourcePattern{
 	// ── Hardcoded credentials ─────────────────────────────────────────────────
 
 	{
-		pattern:  regexp.MustCompile(`(?i)(api[_-]?key|secret|password|token)\s*[:=]\s*["'][a-zA-Z0-9+/=_-]{16,}["']`),
-		rule:     "mcp-hardcoded-secret",
-		severity: SeverityCritical,
-		message:  "Hardcoded credential: %s",
-		langs:    []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
-		cwe:      "CWE-798",
+		pattern:      regexp.MustCompile(`(?i)(api[_-]?key|secret|password|token)\s*[:=]\s*["'][a-zA-Z0-9+/=_-]{16,}["']`),
+		rule:         "mcp-hardcoded-secret",
+		severity:     SeverityCritical,
+		message:      "Hardcoded credential: %s",
+		langs:        []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
+		cwe:          "CWE-798",
+		isSecretRule: true,
 	},
 	{
-		pattern:  regexp.MustCompile(`AKIA[A-Z0-9]{16}`),
-		rule:     "mcp-hardcoded-aws-key",
-		severity: SeverityCritical,
-		message:  "Hardcoded AWS access key: %s",
-		langs:    []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
-		cwe:      "CWE-798",
+		pattern:      regexp.MustCompile(`AKIA[A-Z0-9]{16}`),
+		rule:         "mcp-hardcoded-aws-key",
+		severity:     SeverityCritical,
+		message:      "Hardcoded AWS access key: %s",
+		langs:        []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
+		cwe:          "CWE-798",
+		isSecretRule: true,
 	},
 	{
-		pattern:  regexp.MustCompile(`sk-[a-zA-Z0-9]{20,}`),
-		rule:     "mcp-hardcoded-api-key",
-		severity: SeverityCritical,
-		message:  "Hardcoded API key (OpenAI format): %s",
-		langs:    []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
-		cwe:      "CWE-798",
+		pattern:      regexp.MustCompile(`sk-[a-zA-Z0-9]{20,}`),
+		rule:         "mcp-hardcoded-api-key",
+		severity:     SeverityCritical,
+		message:      "Hardcoded API key (OpenAI format): %s",
+		langs:        []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
+		cwe:          "CWE-798",
+		isSecretRule: true,
 	},
 	{
-		pattern:  regexp.MustCompile(`ghp_[a-zA-Z0-9]{36}`),
-		rule:     "mcp-hardcoded-github-pat",
-		severity: SeverityHigh,
-		message:  "Hardcoded GitHub PAT: %s",
-		langs:    []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
-		cwe:      "CWE-798",
+		pattern:      regexp.MustCompile(`ghp_[a-zA-Z0-9]{36}`),
+		rule:         "mcp-hardcoded-github-pat",
+		severity:     SeverityHigh,
+		message:      "Hardcoded GitHub PAT: %s",
+		langs:        []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
+		cwe:          "CWE-798",
+		isSecretRule: true,
 	},
 
 	// ── Cross-language: bearer tokens ────────────────────────────────────────
 
 	{
-		pattern:  regexp.MustCompile(`Bearer\s+[a-zA-Z0-9\-._~+/]{20,}=*`),
-		rule:     "mcp-hardcoded-bearer-token",
-		severity: SeverityCritical,
-		message:  "Hardcoded Bearer token: %s",
-		langs:    []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
-		cwe:      "CWE-798",
+		pattern:      regexp.MustCompile(`Bearer\s+[a-zA-Z0-9\-._~+/]{20,}=*`),
+		rule:         "mcp-hardcoded-bearer-token",
+		severity:     SeverityCritical,
+		message:      "Hardcoded Bearer token: %s",
+		langs:        []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
+		cwe:          "CWE-798",
+		isSecretRule: true,
 	},
 
 	// ── Cross-language: private key content ──────────────────────────────────
@@ -439,33 +587,36 @@ var sourcePatterns = []sourcePattern{
 	// ── Cross-language: Stripe live secret key ────────────────────────────────
 
 	{
-		pattern:  regexp.MustCompile(`sk_live_[a-zA-Z0-9]{20,}`),
-		rule:     "mcp-hardcoded-stripe-key",
-		severity: SeverityCritical,
-		message:  "Hardcoded Stripe live secret key: %s",
-		langs:    []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
-		cwe:      "CWE-798",
+		pattern:      regexp.MustCompile(`sk_live_[a-zA-Z0-9]{20,}`),
+		rule:         "mcp-hardcoded-stripe-key",
+		severity:     SeverityCritical,
+		message:      "Hardcoded Stripe live secret key: %s",
+		langs:        []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
+		cwe:          "CWE-798",
+		isSecretRule: true,
 	},
 
 	// ── Cross-language: Twilio tokens ────────────────────────────────────────
 
 	{
 		// Twilio auth token: 32 hex chars; API key starts with SK + 32 alphanum
-		pattern:  regexp.MustCompile(`SK[a-zA-Z0-9]{32}`),
-		rule:     "mcp-hardcoded-twilio-key",
-		severity: SeverityHigh,
-		message:  "Possible hardcoded Twilio API key (SK...): %s",
-		langs:    []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
-		cwe:      "CWE-798",
+		pattern:      regexp.MustCompile(`SK[a-zA-Z0-9]{32}`),
+		rule:         "mcp-hardcoded-twilio-key",
+		severity:     SeverityHigh,
+		message:      "Possible hardcoded Twilio API key (SK...): %s",
+		langs:        []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
+		cwe:          "CWE-798",
+		isSecretRule: true,
 	},
 	{
 		// Twilio account SID starts with AC followed by 32 hex chars
-		pattern:  regexp.MustCompile(`AC[a-f0-9]{32}`),
-		rule:     "mcp-hardcoded-twilio-sid",
-		severity: SeverityHigh,
-		message:  "Possible hardcoded Twilio account SID (AC...): %s",
-		langs:    []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
-		cwe:      "CWE-798",
+		pattern:      regexp.MustCompile(`AC[a-f0-9]{32}`),
+		rule:         "mcp-hardcoded-twilio-sid",
+		severity:     SeverityHigh,
+		message:      "Possible hardcoded Twilio account SID (AC...): %s",
+		langs:        []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
+		cwe:          "CWE-798",
+		isSecretRule: true,
 	},
 }
 
@@ -541,21 +692,61 @@ func (s *sastAnalyzer) AnalyzeFile(path string, lang Language) []Finding {
 		}
 
 		for lineNum, line := range lines {
-			matches := sp.pattern.FindStringSubmatch(line)
-			if len(matches) > 0 {
-				matched := strings.TrimSpace(line)
-				if len(matched) > 100 {
-					matched = matched[:100] + "..."
-				}
-				findings = append(findings, Finding{
-					Rule:     sp.rule,
-					Severity: sp.severity,
-					Message:  fmt.Sprintf(sp.message, matched),
-					File:     path,
-					Line:     lineNum + 1,
-					CWE:      sp.cwe,
-				})
+			// Fix 3: skip comment lines — no rules fire on commented-out code.
+			if isCommentLine(line, lang) {
+				continue
 			}
+
+			matches := sp.pattern.FindStringSubmatch(line)
+			if len(matches) == 0 {
+				continue
+			}
+
+			// Fix 5: skip when any exclusion pattern matches the line.
+			excluded := false
+			for _, excl := range sp.excludePatterns {
+				if excl.MatchString(line) {
+					excluded = true
+					break
+				}
+			}
+			if excluded {
+				continue
+			}
+
+			// Fix 1 & 2: for secret rules, suppress placeholder/self-assigned values.
+			if sp.isSecretRule {
+				// Extract the matched value (the quoted secret part).
+				// Use the full line match for placeholder check.
+				matchedValue := matches[0]
+				if isPlaceholderSecret(matchedValue) {
+					continue
+				}
+				if isSelfAssignedSecret(line) {
+					continue
+				}
+			}
+
+			matched := strings.TrimSpace(line)
+			if len(matched) > 100 {
+				matched = matched[:100] + "..."
+			}
+
+			// Fix 7: downgrade destructive-fs severity to INFO when the target
+			// is clearly a temporary directory.
+			severity := sp.severity
+			if sp.rule == "mcp-destructive-fs" && isTempDirOperation(line) {
+				severity = SeverityInfo
+			}
+
+			findings = append(findings, Finding{
+				Rule:     sp.rule,
+				Severity: severity,
+				Message:  fmt.Sprintf(sp.message, matched),
+				File:     path,
+				Line:     lineNum + 1,
+				CWE:      sp.cwe,
+			})
 		}
 	}
 
