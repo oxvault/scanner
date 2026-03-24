@@ -27,4 +27,14 @@ jobs:
           version: latest
           args: release --clean
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # GITHUB_TOKEN is used by GoReleaser to publish the release itself
+          # (create the GitHub Release, upload assets, generate changelog).
+          # However, GITHUB_TOKEN is scoped to this repo only and cannot write
+          # to the cross-repo homebrew-tap. HOMEBREW_TAP_TOKEN must be a
+          # Personal Access Token (classic or fine-grained) with 'contents:write'
+          # permission on oxvault/homebrew-tap. GoReleaser picks it up via the
+          # GITHUB_TOKEN env var — we override it here with the PAT so that the
+          # brews publisher can commit the generated formula to the tap repo.
+          # Create the PAT at https://github.com/settings/tokens and store it
+          # as a repository secret named HOMEBREW_TAP_TOKEN.
+          GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN || secrets.GITHUB_TOKEN }}

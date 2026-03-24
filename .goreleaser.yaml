@@ -25,6 +25,17 @@ archives:
 checksum:
   name_template: 'checksums.txt'
 
+brews:
+  - repository:
+      owner: oxvault
+      name: homebrew-tap
+    directory: Formula
+    homepage: https://github.com/oxvault/scanner
+    description: "MCP security scanner — detect vulnerabilities in AI tool integrations before they run"
+    license: "Apache-2.0"
+    test: |
+      system "#{bin}/oxvault", "version"
+
 changelog:
   sort: asc
   filters:
