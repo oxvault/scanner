@@ -727,3 +727,144 @@ func TestWriteFinding_NoFile(t *testing.T) {
 		t.Errorf("expected rule in output")
 	}
 }
+
+// ── CWE in terminal output ────────────────────────────────────────────────────
+
+func TestWriteFinding_CWE_AppearsInOutput(t *testing.T) {
+	color.NoColor = true
+	defer func() { color.NoColor = false }()
+
+	var b strings.Builder
+	f := Finding{
+		Rule:     "mcp-cmd-injection",
+		Severity: SeverityCritical,
+		Message:  "Direct OS command execution",
+		CWE:      "CWE-78",
+	}
+	writeFinding(&b, f)
+	out := b.String()
+
+	if !strings.Contains(out, "CWE-78") {
+		t.Errorf("expected CWE-78 in writeFinding output, got: %s", out)
+	}
+	if !strings.Contains(out, "mcp-cmd-injection") {
+		t.Errorf("expected rule name in writeFinding output, got: %s", out)
+	}
+	// Both rule name and CWE should appear together
+	if !strings.Contains(out, "mcp-cmd-injection (CWE-78)") {
+		t.Errorf("expected 'mcp-cmd-injection (CWE-78)' in output, got: %s", out)
+	}
+}
+
+func TestWriteFinding_NoCWE_NoParens(t *testing.T) {
+	color.NoColor = true
+	defer func() { color.NoColor = false }()
+
+	var b strings.Builder
+	f := Finding{Rule: "mcp-test", Severity: SeverityHigh, Message: "msg"}
+	writeFinding(&b, f)
+	out := b.String()
+
+	if strings.Contains(out, "(CWE") {
+		t.Errorf("expected no CWE annotation when CWE is empty, got: %s", out)
+	}
+}
+
+func TestReport_Terminal_CWE_Visible(t *testing.T) {
+	r := newReporter(t)
+	findings := []Finding{
+		{
+			Rule:     "mcp-cmd-injection",
+			Severity: SeverityCritical,
+			Message:  "Direct OS command execution",
+			CWE:      "CWE-78",
+		},
+	}
+	out, err := r.Report(findings, FormatTerminal)
+	if err != nil {
+		t.Fatalf("Report() error: %v", err)
+	}
+	text := string(out)
+	if !strings.Contains(text, "CWE-78") {
+		t.Errorf("expected CWE-78 in terminal report output, got: %s", text)
+	}
+}
+
+// ── CWE in SARIF properties ───────────────────────────────────────────────────
+
+type sarifResultWithProps struct {
+	RuleID  string `json:"ruleId"`
+	Level   string `json:"level"`
+	Message struct {
+		Text string `json:"text"`
+	} `json:"message"`
+	Properties *struct {
+		CWE string `json:"cwe"`
+	} `json:"properties"`
+}
+
+type sarifReportWithProps struct {
+	Runs []struct {
+		Results []sarifResultWithProps `json:"results"`
+	} `json:"runs"`
+}
+
+func TestReport_SARIF_CWE_InProperties(t *testing.T) {
+	r := newReporter(t)
+	findings := []Finding{
+		{
+			Rule:     "mcp-cmd-injection",
+			Severity: SeverityCritical,
+			Message:  "Direct OS command execution",
+			CWE:      "CWE-78",
+		},
+	}
+	out, err := r.Report(findings, FormatSARIF)
+	if err != nil {
+		t.Fatalf("Report() SARIF error: %v", err)
+	}
+
+	var report sarifReportWithProps
+	if err := json.Unmarshal(out, &report); err != nil {
+		t.Fatalf("SARIF output is not valid JSON: %v", err)
+	}
+
+	if len(report.Runs) == 0 || len(report.Runs[0].Results) == 0 {
+		t.Fatal("expected at least one SARIF result")
+	}
+	result := report.Runs[0].Results[0]
+	if result.Properties == nil {
+		t.Fatal("expected properties object in SARIF result for finding with CWE")
+	}
+	if result.Properties.CWE != "CWE-78" {
+		t.Errorf("expected properties.cwe = 'CWE-78', got %q", result.Properties.CWE)
+	}
+}
+
+func TestReport_SARIF_NoCWE_NoProperties(t *testing.T) {
+	r := newReporter(t)
+	findings := []Finding{
+		{
+			Rule:     "mcp-test",
+			Severity: SeverityCritical,
+			Message:  "no cwe here",
+		},
+	}
+	out, err := r.Report(findings, FormatSARIF)
+	if err != nil {
+		t.Fatalf("Report() SARIF error: %v", err)
+	}
+
+	var report sarifReportWithProps
+	if err := json.Unmarshal(out, &report); err != nil {
+		t.Fatalf("SARIF output is not valid JSON: %v", err)
+	}
+
+	if len(report.Runs) == 0 || len(report.Runs[0].Results) == 0 {
+		t.Fatal("expected at least one SARIF result")
+	}
+	result := report.Runs[0].Results[0]
+	if result.Properties != nil {
+		t.Errorf("expected no properties when CWE is empty, got: %+v", result.Properties)
+	}
+}

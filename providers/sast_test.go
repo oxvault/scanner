@@ -1588,3 +1588,59 @@ func TestAnalyzeFile_JSON_NotMCPConfig_NotScanned(t *testing.T) {
 	}
 	_ = dir
 }
+
+// ── CWE population tests ──────────────────────────────────────────────────────
+
+func TestAnalyzeFile_CWE_CmdInjection(t *testing.T) {
+	dir := t.TempDir()
+	content := `import os
+result = os.popen(user_cmd)
+`
+	path := writeTempFile(t, dir, "server.py", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangPython)
+	f := requireFinding(t, findings, "mcp-cmd-injection")
+	if f.CWE != "CWE-78" {
+		t.Errorf("expected CWE-78 on mcp-cmd-injection, got %q", f.CWE)
+	}
+}
+
+func TestAnalyzeFile_CWE_CodeEval(t *testing.T) {
+	dir := t.TempDir()
+	content := `eval(user_input)
+`
+	path := writeTempFile(t, dir, "server.py", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangPython)
+	f := requireFinding(t, findings, "mcp-code-eval")
+	if f.CWE != "CWE-94" {
+		t.Errorf("expected CWE-94 on mcp-code-eval, got %q", f.CWE)
+	}
+}
+
+func TestAnalyzeFile_CWE_HardcodedSecret(t *testing.T) {
+	dir := t.TempDir()
+	content := `api_key = "supersecretvalue1234567890abcdef"
+`
+	path := writeTempFile(t, dir, "config.py", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangPython)
+	f := requireFinding(t, findings, "mcp-hardcoded-secret")
+	if f.CWE != "CWE-798" {
+		t.Errorf("expected CWE-798 on mcp-hardcoded-secret, got %q", f.CWE)
+	}
+}
+
+func TestAnalyzeFile_CWE_UnsafeDeserialization(t *testing.T) {
+	dir := t.TempDir()
+	content := `import pickle
+data = pickle.loads(raw_bytes)
+`
+	path := writeTempFile(t, dir, "server.py", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangPython)
+	f := requireFinding(t, findings, "mcp-unsafe-deserialization")
+	if f.CWE != "CWE-502" {
+		t.Errorf("expected CWE-502 on mcp-unsafe-deserialization, got %q", f.CWE)
+	}
+}

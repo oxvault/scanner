@@ -736,3 +736,34 @@ func TestDepAuditor_EmptyDirectory(t *testing.T) {
 		t.Errorf("expected no findings for empty directory, got %d", len(findings))
 	}
 }
+
+// ── CWE and References population ────────────────────────────────────────────
+
+func TestDepAuditor_VulnerableDep_HasCWEAndReference(t *testing.T) {
+	dir := t.TempDir()
+	pkg := map[string]any{
+		"dependencies": map[string]string{
+			"mcp-remote": "0.1.0", // <= MaxAffected 0.1.15
+		},
+	}
+	data, _ := json.Marshal(pkg)
+	writeFile(t, dir, "package.json", string(data))
+
+	auditor := newDepAuditorForTest(t)
+	findings := auditor.AuditDirectory(dir)
+
+	vulnFindings := findingsByRule(findings, "dep-audit-vulnerable")
+	if len(vulnFindings) == 0 {
+		t.Fatal("expected dep-audit-vulnerable finding for mcp-remote@0.1.0")
+	}
+	f := vulnFindings[0]
+	if f.CWE != "CWE-1395" {
+		t.Errorf("expected CWE-1395 on dep-audit-vulnerable, got %q", f.CWE)
+	}
+	if len(f.References) == 0 {
+		t.Fatal("expected References to be populated with CVE ID")
+	}
+	if f.References[0] != "CVE-2025-6514" {
+		t.Errorf("expected References[0] = 'CVE-2025-6514', got %q", f.References[0])
+	}
+}
