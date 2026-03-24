@@ -892,13 +892,26 @@ func TestAnalyzeFile_JS_FsRmdirSync(t *testing.T) {
 	requireFinding(t, findings, "mcp-destructive-fs")
 }
 
-func TestAnalyzeFile_JS_ProcessEnv(t *testing.T) {
+func TestAnalyzeFile_JS_ProcessEnv_Leaked(t *testing.T) {
 	dir := t.TempDir()
-	content := "const key = process.env.API_KEY;\n"
+	content := "return process.env.API_KEY;\n"
 	path := writeTempFile(t, dir, "config.ts", content)
 	s := newSAST(t)
 	findings := s.AnalyzeFile(path, LangTypeScript)
 	requireFinding(t, findings, "mcp-env-leakage")
+}
+
+func TestAnalyzeFile_JS_ProcessEnv_ConfigRead_NoFlag(t *testing.T) {
+	dir := t.TempDir()
+	content := "const port = process.env.PORT || 3000;\n"
+	path := writeTempFile(t, dir, "config.ts", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangTypeScript)
+	for _, f := range findings {
+		if f.Rule == "mcp-env-leakage" {
+			t.Error("should NOT flag process.env config reads")
+		}
+	}
 }
 
 // ── New Go patterns ───────────────────────────────────────────────────────────

@@ -1,0 +1,16 @@
+[
+  {
+    "rule": "dep-audit-vulnerable",
+    "severity": 2,
+    "message": "@modelcontextprotocol/server-filesystem@0.5.1 is vulnerable (CVE-2025-53110, CVSS 7.3): Path traversal via directory containment bypass",
+    "file": "/tmp/tmp.x9uvff7ho8/js/plugins/mcp/examples/client/package.json",
+    "fix": "Upgrade @modelcontextprotocol/server-filesystem above 0.6.3 to fix CVE-2025-53110"
+  },
+  {
+    "rule": "dep-audit-vulnerable",
+    "severity": 3,
+    "message": "@modelcontextprotocol/server-filesystem@0.5.1 is vulnerable (CVE-2025-53109, CVSS 8.4): Symlink escape to arbitrary file access",
+    "file": "/tmp/tmp.x9uvff7ho8/js/plugins/mcp/examples/client/package.json",
+    "fix": "Upgrade @modelcontextprotocol/server-filesystem above 0.6.3 to fix CVE-2025-53109"
+  }
+]

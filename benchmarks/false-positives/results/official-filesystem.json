@@ -1,0 +1,23 @@
+[
+  {
+    "rule": "mcp-path-containment-bypass",
+    "severity": 2,
+    "message": "startsWith() used as path containment check — bypassable via prefix confusion or symlinks (use path.resolve + path.sep): return normalizedPath.startsWith(path.sep);",
+    "file": "/tmp/tmp.cz3srgQCTf/src/filesystem/path-validation.ts",
+    "line": 73
+  },
+  {
+    "rule": "mcp-path-containment-bypass",
+    "severity": 2,
+    "message": "startsWith() used as path containment check — bypassable via prefix confusion or symlinks (use path.resolve + path.sep): return pathDrive === dirDrive \u0026\u0026 normalizedPath.startsWith(normalizedDir.replace(/\\\\?$/, '\\\\'));",
+    "file": "/tmp/tmp.cz3srgQCTf/src/filesystem/path-validation.ts",
+    "line": 81
+  },
+  {
+    "rule": "mcp-path-containment-bypass",
+    "severity": 2,
+    "message": "startsWith() used as path containment check — bypassable via prefix confusion or symlinks (use path.resolve + path.sep): return normalizedPath.startsWith(normalizedDir + path.sep);",
+    "file": "/tmp/tmp.cz3srgQCTf/src/filesystem/path-validation.ts",
+    "line": 84
+  }
+]

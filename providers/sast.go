@@ -203,11 +203,12 @@ var sourcePatterns = []sourcePattern{
 	// ── Environment variable leakage — JavaScript/TypeScript ─────────────────
 
 	{
-		// process.env.SOMETHING returned or logged directly
-		pattern:  regexp.MustCompile(`process\.env\.[A-Z_][A-Z0-9_]*`),
+		// process.env leaked to output — only flag when env var is in a return,
+		// response, console.log, or res.send/json context, not plain config reads
+		pattern:  regexp.MustCompile(`(return|console\.(log|warn|error)|res\.(send|json|write)|\.push|\.join|` + "`" + `).*process\.env\.[A-Z_][A-Z0-9_]*`),
 		rule:     "mcp-env-leakage",
 		severity: SeverityWarning,
-		message:  "Direct process.env access (verify env vars are not leaked to output): %s",
+		message:  "Environment variable leaked to output/response: %s",
 		langs:    []Language{LangJavaScript, LangTypeScript},
 	},
 

@@ -1,0 +1,16 @@
+[
+  {
+    "rule": "mcp-env-leakage",
+    "severity": 1,
+    "message": "Environment variable leaked to output/response: return path.isAbsolute(process.env.MEMORY_FILE_PATH)",
+    "file": "/tmp/tmp.cz3srgQCTf/src/memory/index.ts",
+    "line": 17
+  },
+  {
+    "rule": "mcp-env-leakage",
+    "severity": 1,
+    "message": "Environment variable leaked to output/response: : path.join(path.dirname(fileURLToPath(import.meta.url)), process.env.MEMORY_FILE_PATH);",
+    "file": "/tmp/tmp.cz3srgQCTf/src/memory/index.ts",
+    "line": 19
+  }
+]
