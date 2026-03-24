@@ -3,6 +3,7 @@ package testutil
 
 import (
 	"sync/atomic"
+	"time"
 
 	"github.com/oxvault/scanner/providers"
 )
@@ -116,6 +117,45 @@ type MockReporter struct {
 func (m *MockReporter) Report(findings []providers.Finding, format providers.OutputFormat) ([]byte, error) {
 	m.CallCount.Add(1)
 	return m.ReportResult, m.ReportErr
+}
+
+// MockDepAuditor is a configurable mock for providers.DepAuditor.
+type MockDepAuditor struct {
+	AuditDirectoryResult []providers.Finding
+	CallCount            atomic.Int32
+}
+
+func (m *MockDepAuditor) AuditDirectory(dir string) []providers.Finding {
+	m.CallCount.Add(1)
+	return m.AuditDirectoryResult
+}
+
+// MockHookAnalyzer is a configurable mock for providers.HookAnalyzer.
+type MockHookAnalyzer struct {
+	AnalyzeDirectoryResult []providers.Finding
+	CallCount              atomic.Int32
+}
+
+func (m *MockHookAnalyzer) AnalyzeDirectory(dir string) []providers.Finding {
+	m.CallCount.Add(1)
+	return m.AnalyzeDirectoryResult
+}
+
+// MockNetProbe is a configurable mock for providers.NetProbe.
+type MockNetProbe struct {
+	ProbeResult []providers.NetActivity
+	ProbeErr    error
+	CallCount   atomic.Int32
+	// LastCmd and LastArgs capture the most recent Probe invocation for assertions.
+	LastCmd  string
+	LastArgs []string
+}
+
+func (m *MockNetProbe) Probe(cmd string, args []string, _ time.Duration) ([]providers.NetActivity, error) {
+	m.CallCount.Add(1)
+	m.LastCmd = cmd
+	m.LastArgs = args
+	return m.ProbeResult, m.ProbeErr
 }
 
 // MockPinStore is a configurable mock for providers.PinStore.

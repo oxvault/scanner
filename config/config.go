@@ -22,6 +22,7 @@ type Config struct {
 	SkipSAST     bool
 	SkipManifest bool
 	SkipEgress   bool
+	ProbeNetwork bool // Run runtime network probe after static scan
 }
 
 // DefaultConfig returns a Config with sensible defaults

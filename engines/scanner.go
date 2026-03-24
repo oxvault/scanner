@@ -3,6 +3,7 @@ package engines
 import (
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/oxvault/scanner/providers"
 )
@@ -10,8 +11,10 @@ import (
 // ScanOptions configures a scan run
 type ScanOptions struct {
 	SkipSAST     bool   // Skip source code analysis
+	SkipDepAudit bool   // Skip dependency manifest audit
 	SkipManifest bool   // Skip tool description analysis
 	SkipEgress   bool   // Skip network egress detection
+	ProbeNetwork bool   // Run runtime network probe after static scan
 	FailOn       string // Exit non-zero at this severity: critical, high, warning
 }
 
@@ -57,7 +60,10 @@ type scanner struct {
 	mcpClient    providers.MCPClient
 	ruleMatcher  providers.RuleMatcher
 	sastAnalyzer providers.SASTAnalyzer
+	depAuditor   providers.DepAuditor
+	hookAnalyzer providers.HookAnalyzer
 	reporter     providers.Reporter
+	netProbe     providers.NetProbe // optional — nil if not wired
 	logger       *slog.Logger
 }
 
@@ -66,6 +72,8 @@ func NewScanner(
 	mcpClient providers.MCPClient,
 	ruleMatcher providers.RuleMatcher,
 	sastAnalyzer providers.SASTAnalyzer,
+	depAuditor providers.DepAuditor,
+	hookAnalyzer providers.HookAnalyzer,
 	reporter providers.Reporter,
 	logger *slog.Logger,
 ) ScannerEngine {
@@ -74,9 +82,19 @@ func NewScanner(
 		mcpClient:    mcpClient,
 		ruleMatcher:  ruleMatcher,
 		sastAnalyzer: sastAnalyzer,
+		depAuditor:   depAuditor,
+		hookAnalyzer: hookAnalyzer,
 		reporter:     reporter,
 		logger:       logger,
 	}
+}
+
+// WithNetProbe returns a ScannerEngine with a net probe attached.
+// This is separate from NewScanner to keep the constructor signature stable.
+func WithNetProbe(eng ScannerEngine, probe providers.NetProbe) ScannerEngine {
+	s := eng.(*scanner)
+	s.netProbe = probe
+	return s
 }
 
 func (s *scanner) Scan(target string, opts ScanOptions) (*ScanReport, error) {
@@ -98,7 +116,23 @@ func (s *scanner) Scan(target string, opts ScanOptions) (*ScanReport, error) {
 		s.logger.Info("source code analysis complete", "findings", len(sastFindings))
 	}
 
-	// Step 3: Network egress detection
+	// Step 3: Dependency audit (package.json, requirements.txt, pyproject.toml)
+	if !opts.SkipDepAudit {
+		s.logger.Info("running dependency audit", "path", pkg.Path)
+		depFindings := s.depAuditor.AuditDirectory(pkg.Path)
+		report.Findings = append(report.Findings, depFindings...)
+		s.logger.Info("dependency audit complete", "findings", len(depFindings))
+	}
+
+	// Step 4: Install hook analysis (npm lifecycle scripts, PyPI cmdclass overrides)
+	if !opts.SkipDepAudit && s.hookAnalyzer != nil {
+		s.logger.Info("running install hook analysis", "path", pkg.Path)
+		hookFindings := s.hookAnalyzer.AnalyzeDirectory(pkg.Path)
+		report.Findings = append(report.Findings, hookFindings...)
+		s.logger.Info("install hook analysis complete", "findings", len(hookFindings))
+	}
+
+	// Step 5: Network egress detection
 	if !opts.SkipEgress {
 		s.logger.Info("detecting network egress patterns")
 		egressFindings := s.sastAnalyzer.DetectEgress(pkg.Path)
@@ -113,7 +147,7 @@ func (s *scanner) Scan(target string, opts ScanOptions) (*ScanReport, error) {
 		}
 	}
 
-	// Step 4: Connect to MCP server and get tool descriptions
+	// Step 6: Connect to MCP server and get tool descriptions
 	if !opts.SkipManifest && pkg.Command != "" {
 		s.logger.Info("connecting to MCP server", "cmd", pkg.Command)
 		session, err := s.mcpClient.Connect(pkg.Command, pkg.Args)
@@ -128,7 +162,7 @@ func (s *scanner) Scan(target string, opts ScanOptions) (*ScanReport, error) {
 			} else {
 				report.Tools = tools
 
-				// Step 5: Scan each tool description
+				// Step 6: Scan each tool description
 				for _, tool := range tools {
 					descFindings := s.ruleMatcher.ScanDescription(tool.Description)
 					for i := range descFindings {
@@ -136,7 +170,7 @@ func (s *scanner) Scan(target string, opts ScanOptions) (*ScanReport, error) {
 					}
 					report.Findings = append(report.Findings, descFindings...)
 
-					// Step 6: Classify risk tier
+					// Step 7: Classify risk tier
 					sourceCode := "" // TODO: map tool to source code function
 					tier := s.ruleMatcher.ClassifyTool(tool, sourceCode)
 					if tier >= providers.RiskTierHigh {
@@ -152,7 +186,7 @@ func (s *scanner) Scan(target string, opts ScanOptions) (*ScanReport, error) {
 						})
 					}
 
-					// Step 7: Scan nested descriptions in input schema
+					// Step 8: Scan nested descriptions in input schema
 					schemaDescs := extractSchemaDescriptions(tool.InputSchema)
 					for _, desc := range schemaDescs {
 						nestedFindings := s.ruleMatcher.ScanDescription(desc)
@@ -163,6 +197,26 @@ func (s *scanner) Scan(target string, opts ScanOptions) (*ScanReport, error) {
 						report.Findings = append(report.Findings, nestedFindings...)
 					}
 				}
+			}
+		}
+	}
+
+	// Step N: Runtime network probe (optional — runs after all static analysis)
+	if opts.ProbeNetwork && pkg.Command != "" {
+		if s.netProbe == nil {
+			s.logger.Warn("--probe-network requested but no NetProbe wired; skipping")
+		} else {
+			s.logger.Info("running runtime network probe", "cmd", pkg.Command)
+			activities, probeErr := s.netProbe.Probe(pkg.Command, pkg.Args, 30*time.Second)
+			if probeErr != nil {
+				s.logger.Warn("network probe failed — skipping probe findings", "error", probeErr)
+			} else {
+				probeFindings := providers.NetActivityToFindings(activities)
+				s.logger.Info("network probe complete",
+					"connections", len(activities),
+					"findings", len(probeFindings),
+				)
+				report.Findings = append(report.Findings, probeFindings...)
 			}
 		}
 	}

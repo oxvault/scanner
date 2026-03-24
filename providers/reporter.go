@@ -104,12 +104,14 @@ func (r *reporter) reportTerminal(findings []Finding) ([]byte, error) {
 	}
 
 	// Group by category
-	var sourceFindings, descFindings, credFindings, otherFindings []Finding
+	var sourceFindings, hookFindings, descFindings, credFindings, otherFindings []Finding
 	for _, f := range findings {
 		switch {
 		case strings.HasPrefix(f.Rule, "mcp-cmd-") || strings.HasPrefix(f.Rule, "mcp-code-") ||
 			strings.HasPrefix(f.Rule, "mcp-path-traversal-risk"):
 			sourceFindings = append(sourceFindings, f)
+		case strings.HasPrefix(f.Rule, "mcp-install-hook-"):
+			hookFindings = append(hookFindings, f)
 		case strings.HasPrefix(f.Rule, "mcp-tool-") || strings.HasPrefix(f.Rule, "mcp-sensitive-path") ||
 			strings.HasPrefix(f.Rule, "mcp-secrecy") || strings.HasPrefix(f.Rule, "mcp-prompt-") ||
 			strings.HasPrefix(f.Rule, "mcp-exfiltration") || strings.HasPrefix(f.Rule, "mcp-credential-access") ||
@@ -127,6 +129,15 @@ func (r *reporter) reportTerminal(findings []Finding) ([]byte, error) {
 		b.WriteString(sectionDivider("Source Code Analysis"))
 		b.WriteString("\n\n")
 		for _, f := range sourceFindings {
+			writeFinding(&b, f)
+		}
+	}
+
+	if len(hookFindings) > 0 {
+		b.WriteString("\n")
+		b.WriteString(sectionDivider("Install Hook Analysis"))
+		b.WriteString("\n\n")
+		for _, f := range hookFindings {
 			writeFinding(&b, f)
 		}
 	}

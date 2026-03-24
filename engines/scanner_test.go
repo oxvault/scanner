@@ -19,7 +19,9 @@ func newTestScanner(
 	reporter *testutil.MockReporter,
 ) ScannerEngine {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return NewScanner(resolver, mcpClient, ruleMatcher, sast, reporter, logger)
+	depAuditor := &testutil.MockDepAuditor{}
+	hookAnalyzer := &testutil.MockHookAnalyzer{}
+	return NewScanner(resolver, mcpClient, ruleMatcher, sast, depAuditor, hookAnalyzer, reporter, logger)
 }
 
 // defaultResolvedPackage returns a minimal ResolvedPackage used across tests.
@@ -728,5 +730,227 @@ func TestExtractSchemaDescriptions_NoDescription(t *testing.T) {
 	descs := extractSchemaDescriptions(schema)
 	if len(descs) != 0 {
 		t.Errorf("expected no descriptions, got %d: %v", len(descs), descs)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ProbeNetwork tests
+// ---------------------------------------------------------------------------
+
+// newTestScannerWithProbe creates a scanner with a MockNetProbe attached.
+func newTestScannerWithProbe(
+	resolver *testutil.MockResolver,
+	mcpClient *testutil.MockMCPClient,
+	ruleMatcher *testutil.MockRuleMatcher,
+	sast *testutil.MockSASTAnalyzer,
+	reporter *testutil.MockReporter,
+	probe *testutil.MockNetProbe,
+) ScannerEngine {
+	eng := newTestScanner(resolver, mcpClient, ruleMatcher, sast, reporter)
+	return WithNetProbe(eng, probe)
+}
+
+func TestScanner_ProbeNetwork_CallsProbe(t *testing.T) {
+	pkg := defaultResolvedPackage()
+	resolver := &testutil.MockResolver{ResolveResult: pkg}
+	sast := &testutil.MockSASTAnalyzer{}
+	mcpClient := &testutil.MockMCPClient{
+		ConnectResult:   defaultSession(),
+		ListToolsResult: []providers.MCPTool{},
+	}
+	ruleMatcher := &testutil.MockRuleMatcher{}
+	reporter := &testutil.MockReporter{}
+	probe := &testutil.MockNetProbe{
+		ProbeResult: []providers.NetActivity{},
+	}
+
+	eng := newTestScannerWithProbe(resolver, mcpClient, ruleMatcher, sast, reporter, probe)
+	_, err := eng.Scan("./server", ScanOptions{
+		SkipSAST:     true,
+		SkipEgress:   true,
+		SkipManifest: true,
+		ProbeNetwork: true,
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if probe.CallCount.Load() != 1 {
+		t.Errorf("expected Probe to be called once, got %d", probe.CallCount.Load())
+	}
+	if probe.LastCmd != pkg.Command {
+		t.Errorf("expected Probe cmd %q, got %q", pkg.Command, probe.LastCmd)
+	}
+}
+
+func TestScanner_ProbeNetwork_DisabledByDefault(t *testing.T) {
+	pkg := defaultResolvedPackage()
+	resolver := &testutil.MockResolver{ResolveResult: pkg}
+	sast := &testutil.MockSASTAnalyzer{}
+	mcpClient := &testutil.MockMCPClient{
+		ConnectResult:   defaultSession(),
+		ListToolsResult: []providers.MCPTool{},
+	}
+	ruleMatcher := &testutil.MockRuleMatcher{}
+	reporter := &testutil.MockReporter{}
+	probe := &testutil.MockNetProbe{}
+
+	eng := newTestScannerWithProbe(resolver, mcpClient, ruleMatcher, sast, reporter, probe)
+	_, err := eng.Scan("./server", ScanOptions{
+		SkipSAST:     true,
+		SkipEgress:   true,
+		SkipManifest: true,
+		ProbeNetwork: false, // explicitly off
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if probe.CallCount.Load() != 0 {
+		t.Errorf("expected Probe NOT to be called when ProbeNetwork=false, got %d calls",
+			probe.CallCount.Load())
+	}
+}
+
+func TestScanner_ProbeNetwork_NilProbe_NoError(t *testing.T) {
+	// If ProbeNetwork=true but no probe is wired (nil), the scanner should
+	// log a warning and continue without error.
+	pkg := defaultResolvedPackage()
+	resolver := &testutil.MockResolver{ResolveResult: pkg}
+	sast := &testutil.MockSASTAnalyzer{}
+	mcpClient := &testutil.MockMCPClient{
+		ConnectResult:   defaultSession(),
+		ListToolsResult: []providers.MCPTool{},
+	}
+	ruleMatcher := &testutil.MockRuleMatcher{}
+	reporter := &testutil.MockReporter{}
+
+	// Deliberately do NOT attach a probe
+	eng := newTestScanner(resolver, mcpClient, ruleMatcher, sast, reporter)
+	_, err := eng.Scan("./server", ScanOptions{
+		SkipSAST:     true,
+		SkipEgress:   true,
+		SkipManifest: true,
+		ProbeNetwork: true,
+	})
+
+	if err != nil {
+		t.Errorf("expected no error when probe is nil, got: %v", err)
+	}
+}
+
+func TestScanner_ProbeNetwork_FindingsAdded(t *testing.T) {
+	pkg := defaultResolvedPackage()
+	resolver := &testutil.MockResolver{ResolveResult: pkg}
+	sast := &testutil.MockSASTAnalyzer{}
+	mcpClient := &testutil.MockMCPClient{
+		ConnectResult:   defaultSession(),
+		ListToolsResult: []providers.MCPTool{},
+	}
+	ruleMatcher := &testutil.MockRuleMatcher{}
+	reporter := &testutil.MockReporter{}
+	probe := &testutil.MockNetProbe{
+		ProbeResult: []providers.NetActivity{
+			{
+				Type:        providers.NetActivityTCP,
+				Destination: "169.254.169.254:80",
+				ToolName:    "suspect_tool",
+			},
+			{
+				Type:        providers.NetActivityDNS,
+				Destination: "8.8.8.8:53",
+			},
+		},
+	}
+
+	eng := newTestScannerWithProbe(resolver, mcpClient, ruleMatcher, sast, reporter, probe)
+	report, err := eng.Scan("./server", ScanOptions{
+		SkipSAST:     true,
+		SkipEgress:   true,
+		SkipManifest: true,
+		ProbeNetwork: true,
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// 2 NetActivity → 2 Findings (metadata CRITICAL + DNS WARNING)
+	if len(report.Findings) != 2 {
+		t.Fatalf("expected 2 findings from probe, got %d: %v", len(report.Findings), report.Findings)
+	}
+
+	hasCritical := false
+	hasWarning := false
+	for _, f := range report.Findings {
+		if f.Severity == providers.SeverityCritical && f.Rule == "net-probe-metadata-service" {
+			hasCritical = true
+		}
+		if f.Severity == providers.SeverityWarning && f.Rule == "net-probe-dns-query" {
+			hasWarning = true
+		}
+	}
+	if !hasCritical {
+		t.Error("expected CRITICAL finding for metadata service connection")
+	}
+	if !hasWarning {
+		t.Error("expected WARNING finding for DNS query")
+	}
+}
+
+func TestScanner_ProbeNetwork_ProbeError_GracefulContinue(t *testing.T) {
+	pkg := defaultResolvedPackage()
+	resolver := &testutil.MockResolver{ResolveResult: pkg}
+	sast := &testutil.MockSASTAnalyzer{}
+	mcpClient := &testutil.MockMCPClient{
+		ConnectResult:   defaultSession(),
+		ListToolsResult: []providers.MCPTool{},
+	}
+	ruleMatcher := &testutil.MockRuleMatcher{}
+	reporter := &testutil.MockReporter{}
+	probe := &testutil.MockNetProbe{
+		ProbeErr: errors.New("strace failed"),
+	}
+
+	eng := newTestScannerWithProbe(resolver, mcpClient, ruleMatcher, sast, reporter, probe)
+	report, err := eng.Scan("./server", ScanOptions{
+		SkipSAST:     true,
+		SkipEgress:   true,
+		SkipManifest: true,
+		ProbeNetwork: true,
+	})
+
+	if err != nil {
+		t.Fatalf("expected graceful continuation on probe error, got: %v", err)
+	}
+	// No findings added when probe errors out
+	if len(report.Findings) != 0 {
+		t.Errorf("expected no findings when probe errors, got %d", len(report.Findings))
+	}
+}
+
+func TestScanner_ProbeNetwork_SkippedWhenNoCommand(t *testing.T) {
+	// Even with ProbeNetwork=true, if pkg.Command is empty the probe is skipped.
+	pkg := &providers.ResolvedPackage{Path: "/tmp/static", Command: ""}
+	resolver := &testutil.MockResolver{ResolveResult: pkg}
+	sast := &testutil.MockSASTAnalyzer{}
+	mcpClient := &testutil.MockMCPClient{}
+	ruleMatcher := &testutil.MockRuleMatcher{}
+	reporter := &testutil.MockReporter{}
+	probe := &testutil.MockNetProbe{}
+
+	eng := newTestScannerWithProbe(resolver, mcpClient, ruleMatcher, sast, reporter, probe)
+	_, err := eng.Scan("./server", ScanOptions{
+		SkipSAST:     true,
+		SkipEgress:   true,
+		SkipManifest: true,
+		ProbeNetwork: true,
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if probe.CallCount.Load() != 0 {
+		t.Errorf("probe should not be called when pkg.Command is empty, got %d calls",
+			probe.CallCount.Load())
 	}
 }

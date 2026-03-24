@@ -1,9 +1,17 @@
 package providers
 
+import "time"
+
 // Resolver downloads/clones MCP server packages to a local path.
 // Supports: local paths, npm packages, GitHub repos.
 type Resolver interface {
 	Resolve(target string) (*ResolvedPackage, error)
+}
+
+// NetProbe spawns an MCP server in a network-monitored environment and
+// detects actual outbound connections made during a live tool-call session.
+type NetProbe interface {
+	Probe(cmd string, args []string, timeout time.Duration) ([]NetActivity, error)
 }
 
 // MCPClient connects to MCP servers via JSON-RPC over stdio.
@@ -27,6 +35,13 @@ type SASTAnalyzer interface {
 	AnalyzeFile(path string, lang Language) []Finding
 	AnalyzeDirectory(dir string) []Finding
 	DetectEgress(dir string) []EgressFinding
+}
+
+// HookAnalyzer scans npm/PyPI package install scripts for malicious patterns.
+// It provides precise, severity-graded findings for install lifecycle hooks
+// (preinstall, install, postinstall, prepare) and their referenced script files.
+type HookAnalyzer interface {
+	AnalyzeDirectory(dir string) []Finding
 }
 
 // Reporter formats findings for output.

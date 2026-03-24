@@ -1,5 +1,7 @@
 package providers
 
+import "time"
+
 // Severity levels for findings
 type Severity int
 
@@ -142,4 +144,18 @@ type EgressFinding struct {
 	Destination string `json:"destination,omitempty"` // URL or hostname if detectable
 	Method      string `json:"method"`                // e.g., "requests.post", "fetch"
 	ToolName    string `json:"tool_name,omitempty"`
+}
+
+// NetActivity represents a single observed outbound network event captured
+// during a live probe session of an MCP server.
+type NetActivity struct {
+	// Type is the protocol observed: "dns", "tcp", or "udp".
+	Type string `json:"type"`
+	// Destination is the remote address in "host:port" or "ip:port" form.
+	Destination string `json:"destination"`
+	// Timestamp records when the connection attempt was observed.
+	Timestamp time.Time `json:"timestamp"`
+	// ToolName is populated when the activity can be correlated to a specific
+	// tool call (best-effort — may be empty).
+	ToolName string `json:"tool_name,omitempty"`
 }

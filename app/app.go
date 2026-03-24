@@ -23,9 +23,12 @@ type AppInterface interface {
 	GetMCPClient() providers.MCPClient
 	GetRuleMatcher() providers.RuleMatcher
 	GetSASTAnalyzer() providers.SASTAnalyzer
+	GetDepAuditor() providers.DepAuditor
+	GetHookAnalyzer() providers.HookAnalyzer
 	GetReporter() providers.Reporter
 	GetPinStore() providers.PinStore
 	GetResolver() providers.Resolver
+	GetNetProbe() providers.NetProbe
 
 	// Init steps
 	InitProviders() error
@@ -43,9 +46,12 @@ type App struct {
 	mcpClient    providers.MCPClient
 	ruleMatcher  providers.RuleMatcher
 	sastAnalyzer providers.SASTAnalyzer
+	depAuditor   providers.DepAuditor
+	hookAnalyzer providers.HookAnalyzer
 	reporter     providers.Reporter
 	pinStore     providers.PinStore
 	resolver     providers.Resolver
+	netProbe     providers.NetProbe
 
 	// Engines
 	scanner engines.ScannerEngine
@@ -67,6 +73,14 @@ func WithSASTAnalyzer(s providers.SASTAnalyzer) AppOption {
 	return func(a *App) { a.sastAnalyzer = s }
 }
 
+func WithDepAuditor(d providers.DepAuditor) AppOption {
+	return func(a *App) { a.depAuditor = d }
+}
+
+func WithHookAnalyzer(h providers.HookAnalyzer) AppOption {
+	return func(a *App) { a.hookAnalyzer = h }
+}
+
 func WithReporter(r providers.Reporter) AppOption {
 	return func(a *App) { a.reporter = r }
 }
@@ -77,6 +91,10 @@ func WithPinStore(s providers.PinStore) AppOption {
 
 func WithResolver(r providers.Resolver) AppOption {
 	return func(a *App) { a.resolver = r }
+}
+
+func WithNetProbeOption(p providers.NetProbe) AppOption {
+	return func(a *App) { a.netProbe = p }
 }
 
 func WithLogger(l *slog.Logger) AppOption {
@@ -133,11 +151,20 @@ func (a *App) InitProviders() error {
 	if a.sastAnalyzer == nil {
 		a.sastAnalyzer = providers.NewSASTAnalyzer()
 	}
+	if a.depAuditor == nil {
+		a.depAuditor = providers.NewDepAuditor()
+	}
+	if a.hookAnalyzer == nil {
+		a.hookAnalyzer = providers.NewHookAnalyzer()
+	}
 	if a.reporter == nil {
 		a.reporter = providers.NewReporter()
 	}
 	if a.pinStore == nil {
 		a.pinStore = providers.NewPinStore(a.Config.PinDir)
+	}
+	if a.netProbe == nil {
+		a.netProbe = providers.NewNetProbe(a.Logger)
 	}
 	return nil
 }
@@ -145,14 +172,18 @@ func (a *App) InitProviders() error {
 // InitEngines creates all engine instances, injecting providers
 func (a *App) InitEngines() error {
 	if a.scanner == nil {
-		a.scanner = engines.NewScanner(
+		eng := engines.NewScanner(
 			a.resolver,
 			a.mcpClient,
 			a.ruleMatcher,
 			a.sastAnalyzer,
+			a.depAuditor,
+			a.hookAnalyzer,
 			a.reporter,
 			a.Logger,
 		)
+		// Attach the net probe so the scanner can use it when ProbeNetwork is set.
+		a.scanner = engines.WithNetProbe(eng, a.netProbe)
 	}
 	if a.pinner == nil {
 		a.pinner = engines.NewPinner(
@@ -171,11 +202,14 @@ func (a *App) Shutdown(_ context.Context) error {
 
 // Getters
 
-func (a *App) GetScanner() engines.ScannerEngine   { return a.scanner }
-func (a *App) GetPinner() engines.PinEngine         { return a.pinner }
-func (a *App) GetMCPClient() providers.MCPClient    { return a.mcpClient }
-func (a *App) GetRuleMatcher() providers.RuleMatcher { return a.ruleMatcher }
-func (a *App) GetSASTAnalyzer() providers.SASTAnalyzer { return a.sastAnalyzer }
-func (a *App) GetReporter() providers.Reporter       { return a.reporter }
-func (a *App) GetPinStore() providers.PinStore        { return a.pinStore }
-func (a *App) GetResolver() providers.Resolver        { return a.resolver }
+func (a *App) GetScanner() engines.ScannerEngine        { return a.scanner }
+func (a *App) GetPinner() engines.PinEngine              { return a.pinner }
+func (a *App) GetMCPClient() providers.MCPClient         { return a.mcpClient }
+func (a *App) GetRuleMatcher() providers.RuleMatcher     { return a.ruleMatcher }
+func (a *App) GetSASTAnalyzer() providers.SASTAnalyzer   { return a.sastAnalyzer }
+func (a *App) GetDepAuditor() providers.DepAuditor       { return a.depAuditor }
+func (a *App) GetHookAnalyzer() providers.HookAnalyzer   { return a.hookAnalyzer }
+func (a *App) GetReporter() providers.Reporter           { return a.reporter }
+func (a *App) GetPinStore() providers.PinStore           { return a.pinStore }
+func (a *App) GetResolver() providers.Resolver           { return a.resolver }
+func (a *App) GetNetProbe() providers.NetProbe           { return a.netProbe }
