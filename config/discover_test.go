@@ -148,7 +148,7 @@ func TestParseConfigFile_ServerWithNoArgs(t *testing.T) {
 	if servers[0].Command != "python3" {
 		t.Errorf("expected Command='python3', got %q", servers[0].Command)
 	}
-	if servers[0].Args != nil && len(servers[0].Args) != 0 {
+	if len(servers[0].Args) != 0 {
 		t.Errorf("expected nil/empty Args, got %v", servers[0].Args)
 	}
 }

@@ -69,13 +69,6 @@ func requireHookFinding(t *testing.T, findings []Finding, rule string) Finding {
 	return *f
 }
 
-func requireNoHookFinding(t *testing.T, findings []Finding, rule string) {
-	t.Helper()
-	if f := findHookFinding(findings, rule); f != nil {
-		t.Errorf("unexpected hook finding with rule %q: %s", rule, f.Message)
-	}
-}
-
 // ── Clean scripts (no findings expected) ─────────────────────────────────────
 
 func TestHookAnalyzer_CleanScript_Tsc(t *testing.T) {

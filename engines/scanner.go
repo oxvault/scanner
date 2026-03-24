@@ -154,7 +154,7 @@ func (s *scanner) Scan(target string, opts ScanOptions) (*ScanReport, error) {
 		if err != nil {
 			s.logger.Warn("could not connect to MCP server — skipping manifest analysis", "error", err)
 		} else {
-			defer s.mcpClient.Close(session)
+			defer func() { _ = s.mcpClient.Close(session) }()
 
 			tools, err := s.mcpClient.ListTools(session)
 			if err != nil {

@@ -583,7 +583,7 @@ func (s *sastAnalyzer) DetectEgress(dir string) []EgressFinding {
 		if err != nil {
 			return nil
 		}
-		defer file.Close()
+		defer func() { _ = file.Close() }()
 
 		scanner := bufio.NewScanner(file)
 		lineNum := 0
