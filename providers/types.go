@@ -2,6 +2,29 @@ package providers
 
 import "time"
 
+// Confidence levels for findings
+type Confidence int
+
+const (
+	ConfidenceLow    Confidence = 1
+	ConfidenceMedium Confidence = 2
+	ConfidenceHigh   Confidence = 3
+)
+
+// String returns the human-readable label for a confidence level.
+func (c Confidence) String() string {
+	switch c {
+	case ConfidenceLow:
+		return "low"
+	case ConfidenceMedium:
+		return "medium"
+	case ConfidenceHigh:
+		return "high"
+	default:
+		return "unknown"
+	}
+}
+
 // Severity levels for findings
 type Severity int
 
@@ -75,15 +98,17 @@ const (
 
 // Finding represents a single security finding
 type Finding struct {
-	Rule       string   `json:"rule"`
-	Severity   Severity `json:"severity"`
-	Message    string   `json:"message"`
-	File       string   `json:"file,omitempty"`
-	Line       int      `json:"line,omitempty"`
-	Tool       string   `json:"tool,omitempty"`
-	Fix        string   `json:"fix,omitempty"`
-	CWE        string   `json:"cwe,omitempty"`        // e.g., "CWE-78"
-	References []string `json:"references,omitempty"` // CVE IDs, URLs
+	Rule            string     `json:"rule"`
+	Severity        Severity   `json:"severity"`
+	Confidence      Confidence `json:"confidence"`
+	ConfidenceLabel string     `json:"confidenceLabel"`
+	Message         string     `json:"message"`
+	File            string     `json:"file,omitempty"`
+	Line            int        `json:"line,omitempty"`
+	Tool            string     `json:"tool,omitempty"`
+	Fix             string     `json:"fix,omitempty"`
+	CWE             string     `json:"cwe,omitempty"`        // e.g., "CWE-78"
+	References      []string   `json:"references,omitempty"` // CVE IDs, URLs
 }
 
 // MCPTool represents a tool from the MCP tools/list response

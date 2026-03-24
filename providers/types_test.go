@@ -1,8 +1,94 @@
 package providers
 
 import (
+	"encoding/json"
 	"testing"
 )
+
+func TestConfidenceString(t *testing.T) {
+	tests := []struct {
+		name       string
+		confidence Confidence
+		want       string
+	}{
+		{"low", ConfidenceLow, "low"},
+		{"medium", ConfidenceMedium, "medium"},
+		{"high", ConfidenceHigh, "high"},
+		{"zero value", Confidence(0), "unknown"},
+		{"out of range", Confidence(99), "unknown"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.confidence.String()
+			if got != tt.want {
+				t.Errorf("Confidence(%d).String() = %q, want %q", tt.confidence, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestConfidenceOrdering(t *testing.T) {
+	if ConfidenceHigh <= ConfidenceMedium {
+		t.Error("ConfidenceHigh must be > ConfidenceMedium")
+	}
+	if ConfidenceMedium <= ConfidenceLow {
+		t.Error("ConfidenceMedium must be > ConfidenceLow")
+	}
+	if ConfidenceLow <= 0 {
+		t.Error("ConfidenceLow must be > 0 to distinguish from zero value")
+	}
+}
+
+func TestConfidenceConstants(t *testing.T) {
+	if ConfidenceLow != 1 {
+		t.Errorf("ConfidenceLow = %d, want 1", ConfidenceLow)
+	}
+	if ConfidenceMedium != 2 {
+		t.Errorf("ConfidenceMedium = %d, want 2", ConfidenceMedium)
+	}
+	if ConfidenceHigh != 3 {
+		t.Errorf("ConfidenceHigh = %d, want 3", ConfidenceHigh)
+	}
+}
+
+func TestFindingJSON_ConfidenceFields(t *testing.T) {
+	f := Finding{
+		Rule:            "mcp-test",
+		Severity:        SeverityCritical,
+		Confidence:      ConfidenceHigh,
+		ConfidenceLabel: ConfidenceHigh.String(),
+		Message:         "test",
+	}
+
+	data, err := json.Marshal(f)
+	if err != nil {
+		t.Fatalf("json.Marshal error: %v", err)
+	}
+
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("json.Unmarshal error: %v", err)
+	}
+
+	// confidence should be the integer value
+	conf, ok := m["confidence"].(float64)
+	if !ok {
+		t.Fatalf("confidence field missing or wrong type in JSON")
+	}
+	if int(conf) != int(ConfidenceHigh) {
+		t.Errorf("confidence = %v, want %d", conf, ConfidenceHigh)
+	}
+
+	// confidenceLabel should be "high"
+	label, ok := m["confidenceLabel"].(string)
+	if !ok {
+		t.Fatalf("confidenceLabel field missing or wrong type in JSON")
+	}
+	if label != "high" {
+		t.Errorf("confidenceLabel = %q, want %q", label, "high")
+	}
+}
 
 func TestSeverityString(t *testing.T) {
 	tests := []struct {

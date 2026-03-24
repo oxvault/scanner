@@ -20,10 +20,11 @@ type sourcePattern struct {
 	pattern         *regexp.Regexp
 	rule            string
 	severity        Severity
+	confidence      Confidence       // How certain is this finding?
 	message         string
 	langs           []Language
 	cwe             string
-	isSecretRule    bool         // Fix 1 & 2: enables placeholder/self-assignment exclusions
+	isSecretRule    bool             // Fix 1 & 2: enables placeholder/self-assignment exclusions
 	excludePatterns []*regexp.Regexp // Fix 5: skip finding when any exclusion matches the line
 }
 
@@ -147,67 +148,74 @@ var sourcePatterns = []sourcePattern{
 	// ── Command injection — Python ────────────────────────────────────────────
 
 	{
-		pattern:  regexp.MustCompile(`os\.(popen|system)\s*\(`),
-		rule:     "mcp-cmd-injection",
-		severity: SeverityCritical,
-		message:  "Direct OS command execution: %s",
-		langs:    []Language{LangPython},
-		cwe:      "CWE-78",
+		pattern:    regexp.MustCompile(`os\.(popen|system)\s*\(`),
+		rule:       "mcp-cmd-injection",
+		severity:   SeverityCritical,
+		confidence: ConfidenceHigh,
+		message:    "Direct OS command execution: %s",
+		langs:      []Language{LangPython},
+		cwe:        "CWE-78",
 	},
 	{
 		// subprocess.run/call/Popen/check_output with shell=True on the same line
-		pattern:  regexp.MustCompile(`subprocess\.(run|call|Popen|check_output)\s*\([^)]*shell\s*=\s*True`),
-		rule:     "mcp-cmd-injection",
-		severity: SeverityCritical,
-		message:  "Subprocess with shell=True: %s",
-		langs:    []Language{LangPython},
-		cwe:      "CWE-78",
+		pattern:    regexp.MustCompile(`subprocess\.(run|call|Popen|check_output)\s*\([^)]*shell\s*=\s*True`),
+		rule:       "mcp-cmd-injection",
+		severity:   SeverityCritical,
+		confidence: ConfidenceHigh,
+		message:    "Subprocess with shell=True: %s",
+		langs:      []Language{LangPython},
+		cwe:        "CWE-78",
 	},
 	{
 		// subprocess.check_output alone (may use shell=True on a different line
 		// or the call itself is dangerous if args contain user input)
-		pattern:  regexp.MustCompile(`subprocess\.check_output\s*\(`),
-		rule:     "mcp-cmd-injection",
-		severity: SeverityHigh,
-		message:  "subprocess.check_output usage (verify shell=False and safe args): %s",
-		langs:    []Language{LangPython},
-		cwe:      "CWE-78",
+		pattern:    regexp.MustCompile(`subprocess\.check_output\s*\(`),
+		rule:       "mcp-cmd-injection",
+		severity:   SeverityHigh,
+		confidence: ConfidenceMedium,
+		message:    "subprocess.check_output usage (verify shell=False and safe args): %s",
+		langs:      []Language{LangPython},
+		cwe:        "CWE-78",
 	},
 	{
 		// subprocess.Popen alone
-		pattern:  regexp.MustCompile(`subprocess\.Popen\s*\(`),
-		rule:     "mcp-cmd-injection",
-		severity: SeverityHigh,
-		message:  "subprocess.Popen usage (verify shell=False and safe args): %s",
-		langs:    []Language{LangPython},
-		cwe:      "CWE-78",
+		pattern:    regexp.MustCompile(`subprocess\.Popen\s*\(`),
+		rule:       "mcp-cmd-injection",
+		severity:   SeverityHigh,
+		confidence: ConfidenceMedium,
+		message:    "subprocess.Popen usage (verify shell=False and safe args): %s",
+		langs:      []Language{LangPython},
+		cwe:        "CWE-78",
 	},
 	{
 		// exec() — Python built-in dynamic code execution
-		pattern:  regexp.MustCompile(`\bexec\s*\(`),
-		rule:     "mcp-code-eval",
-		severity: SeverityCritical,
-		message:  "Python exec() dynamic code execution: %s",
-		langs:    []Language{LangPython},
-		cwe:      "CWE-94",
+		pattern:    regexp.MustCompile(`\bexec\s*\(`),
+		rule:       "mcp-code-eval",
+		severity:   SeverityCritical,
+		confidence: ConfidenceHigh,
+		message:    "Python exec() dynamic code execution: %s",
+		langs:      []Language{LangPython},
+		cwe:        "CWE-94",
 	},
 	{
-		pattern:  regexp.MustCompile(`eval\s*\(`),
-		rule:     "mcp-code-eval",
-		severity: SeverityCritical,
-		message:  "Dynamic code evaluation: %s",
-		langs:    []Language{LangPython, LangJavaScript, LangTypeScript},
-		cwe:      "CWE-94",
+		pattern:    regexp.MustCompile(`eval\s*\(`),
+		rule:       "mcp-code-eval",
+		severity:   SeverityCritical,
+		confidence: ConfidenceMedium,
+		message:    "Dynamic code evaluation: %s",
+		langs:      []Language{LangPython, LangJavaScript, LangTypeScript},
+		cwe:        "CWE-94",
 	},
 	{
 		// __import__ — dynamic module import, often used in payloads.
 		// Fix 5: exclude standard library boilerplate patterns that are benign.
-		pattern:  regexp.MustCompile(`__import__\s*\(`),
-		rule:     "mcp-dynamic-import",
-		severity: SeverityHigh,
-		message:  "Dynamic __import__() call (potential payload execution): %s",
-		langs:    []Language{LangPython},
-		cwe:      "CWE-94",
+		pattern:    regexp.MustCompile(`__import__\s*\(`),
+		rule:       "mcp-dynamic-import",
+		severity:   SeverityHigh,
+		confidence: ConfidenceMedium,
+		message:    "Dynamic __import__() call (potential payload execution): %s",
+		langs:      []Language{LangPython},
+		cwe:        "CWE-94",
 		excludePatterns: []*regexp.Regexp{
 			// pkgutil.extend_path boilerplate: __import__('pkgutil').extend_path(...)
 			regexp.MustCompile(`__import__\s*\(\s*['"]pkgutil['"]\s*\)`),
@@ -220,52 +228,57 @@ var sourcePatterns = []sourcePattern{
 	// ── Deserialization — Python ──────────────────────────────────────────────
 
 	{
-		pattern:  regexp.MustCompile(`pickle\.(loads?)\s*\(`),
-		rule:     "mcp-unsafe-deserialization",
-		severity: SeverityCritical,
-		message:  "Unsafe pickle deserialization (arbitrary code execution risk): %s",
-		langs:    []Language{LangPython},
-		cwe:      "CWE-502",
+		pattern:    regexp.MustCompile(`pickle\.(loads?)\s*\(`),
+		rule:       "mcp-unsafe-deserialization",
+		severity:   SeverityCritical,
+		confidence: ConfidenceHigh,
+		message:    "Unsafe pickle deserialization (arbitrary code execution risk): %s",
+		langs:      []Language{LangPython},
+		cwe:        "CWE-502",
 	},
 	{
 		// yaml.load( without Loader= is the unsafe form; yaml.safe_load is fine
-		pattern:  regexp.MustCompile(`yaml\.load\s*\([^)]*\)`),
-		rule:     "mcp-unsafe-deserialization",
-		severity: SeverityHigh,
-		message:  "Unsafe yaml.load() without SafeLoader (use yaml.safe_load): %s",
-		langs:    []Language{LangPython},
-		cwe:      "CWE-502",
+		pattern:    regexp.MustCompile(`yaml\.load\s*\([^)]*\)`),
+		rule:       "mcp-unsafe-deserialization",
+		severity:   SeverityHigh,
+		confidence: ConfidenceHigh,
+		message:    "Unsafe yaml.load() without SafeLoader (use yaml.safe_load): %s",
+		langs:      []Language{LangPython},
+		cwe:        "CWE-502",
 	},
 
 	// ── SSRF / open redirect — Python ────────────────────────────────────────
 
 	{
 		// requests.get/post with a variable URL (potential SSRF)
-		pattern:  regexp.MustCompile(`requests\.(get|post)\s*\(\s*[^"'\s][^)]*\)`),
-		rule:     "mcp-ssrf-risk",
-		severity: SeverityWarning,
-		message:  "requests.%s with dynamic URL (potential SSRF — validate/allowlist URLs): %s",
-		langs:    []Language{LangPython},
-		cwe:      "CWE-918",
+		pattern:    regexp.MustCompile(`requests\.(get|post)\s*\(\s*[^"'\s][^)]*\)`),
+		rule:       "mcp-ssrf-risk",
+		severity:   SeverityWarning,
+		confidence: ConfidenceLow,
+		message:    "requests.%s with dynamic URL (potential SSRF — validate/allowlist URLs): %s",
+		langs:      []Language{LangPython},
+		cwe:        "CWE-918",
 	},
 
 	// ── Destructive file operations — Python ─────────────────────────────────
 
 	{
-		pattern:  regexp.MustCompile(`shutil\.rmtree\s*\(`),
-		rule:     "mcp-destructive-fs",
-		severity: SeverityHigh,
-		message:  "shutil.rmtree() — recursive directory deletion: %s",
-		langs:    []Language{LangPython},
-		cwe:      "CWE-73",
+		pattern:    regexp.MustCompile(`shutil\.rmtree\s*\(`),
+		rule:       "mcp-destructive-fs",
+		severity:   SeverityHigh,
+		confidence: ConfidenceMedium,
+		message:    "shutil.rmtree() — recursive directory deletion: %s",
+		langs:      []Language{LangPython},
+		cwe:        "CWE-73",
 	},
 	{
-		pattern:  regexp.MustCompile(`os\.remove\s*\(`),
-		rule:     "mcp-destructive-fs",
-		severity: SeverityHigh,
-		message:  "os.remove() — file deletion: %s",
-		langs:    []Language{LangPython},
-		cwe:      "CWE-73",
+		pattern:    regexp.MustCompile(`os\.remove\s*\(`),
+		rule:       "mcp-destructive-fs",
+		severity:   SeverityHigh,
+		confidence: ConfidenceMedium,
+		message:    "os.remove() — file deletion: %s",
+		langs:      []Language{LangPython},
+		cwe:        "CWE-73",
 	},
 
 	// ── Command injection — JavaScript/TypeScript ─────────────────────────────
@@ -275,82 +288,90 @@ var sourcePatterns = []sourcePattern{
 	// injection.  Bare imports and safe static calls are no longer flagged.
 	{
 		// child_process.exec( or child_process.execSync( with concatenation/template
-		pattern:  regexp.MustCompile("child_process\\.(exec|execSync)\\s*\\([^)]*(?:\\+|`)"),
-		rule:     "mcp-cmd-injection",
-		severity: SeverityCritical,
-		message:  "child_process.exec with string concatenation/template (injection risk): %s",
-		langs:    []Language{LangJavaScript, LangTypeScript},
-		cwe:      "CWE-78",
+		pattern:    regexp.MustCompile("child_process\\.(exec|execSync)\\s*\\([^)]*(?:\\+|`)"),
+		rule:       "mcp-cmd-injection",
+		severity:   SeverityCritical,
+		confidence: ConfidenceHigh,
+		message:    "child_process.exec with string concatenation/template (injection risk): %s",
+		langs:      []Language{LangJavaScript, LangTypeScript},
+		cwe:        "CWE-78",
 	},
 	{
 		// exec( / execSync( called directly (imported as named binding) with
 		// concatenation or template literal
-		pattern:  regexp.MustCompile("\\bexecSync?\\s*\\([^)]*(?:\\+|`)"),
-		rule:     "mcp-cmd-injection",
-		severity: SeverityCritical,
-		message:  "execSync with string concatenation/template (injection risk): %s",
-		langs:    []Language{LangJavaScript, LangTypeScript},
-		cwe:      "CWE-78",
+		pattern:    regexp.MustCompile("\\bexecSync?\\s*\\([^)]*(?:\\+|`)"),
+		rule:       "mcp-cmd-injection",
+		severity:   SeverityCritical,
+		confidence: ConfidenceHigh,
+		message:    "execSync with string concatenation/template (injection risk): %s",
+		langs:      []Language{LangJavaScript, LangTypeScript},
+		cwe:        "CWE-78",
 	},
 	{
 		// child_process.spawn with shell: true
-		pattern:  regexp.MustCompile(`child_process\.spawn\s*\([^)]*shell\s*:\s*true`),
-		rule:     "mcp-cmd-injection",
-		severity: SeverityCritical,
-		message:  "child_process.spawn with shell:true: %s",
-		langs:    []Language{LangJavaScript, LangTypeScript},
-		cwe:      "CWE-78",
+		pattern:    regexp.MustCompile(`child_process\.spawn\s*\([^)]*shell\s*:\s*true`),
+		rule:       "mcp-cmd-injection",
+		severity:   SeverityCritical,
+		confidence: ConfidenceHigh,
+		message:    "child_process.spawn with shell:true: %s",
+		langs:      []Language{LangJavaScript, LangTypeScript},
+		cwe:        "CWE-78",
 	},
 	{
 		// require('child_process') — reduced to INFO: it's an import, not usage.
 		// Fix 4: bare imports are no longer HIGH; only actual dangerous calls count.
-		pattern:  regexp.MustCompile(`require\s*\(\s*['"]child_process['"]\s*\)`),
-		rule:     "mcp-cmd-injection",
-		severity: SeverityInfo,
-		message:  "child_process module imported (verify no unsafe .exec usage): %s",
-		langs:    []Language{LangJavaScript, LangTypeScript},
-		cwe:      "CWE-78",
+		pattern:    regexp.MustCompile(`require\s*\(\s*['"]child_process['"]\s*\)`),
+		rule:       "mcp-cmd-injection",
+		severity:   SeverityInfo,
+		confidence: ConfidenceLow,
+		message:    "child_process module imported (verify no unsafe .exec usage): %s",
+		langs:      []Language{LangJavaScript, LangTypeScript},
+		cwe:        "CWE-78",
 	},
 
 	// ── Code generation / eval — JavaScript/TypeScript ───────────────────────
 
 	{
 		// new Function(...) — runtime code generation
-		pattern:  regexp.MustCompile(`new\s+Function\s*\(`),
-		rule:     "mcp-code-eval",
-		severity: SeverityCritical,
-		message:  "new Function() — dynamic code generation: %s",
-		langs:    []Language{LangJavaScript, LangTypeScript},
-		cwe:      "CWE-94",
+		pattern:    regexp.MustCompile(`new\s+Function\s*\(`),
+		rule:       "mcp-code-eval",
+		severity:   SeverityCritical,
+		confidence: ConfidenceHigh,
+		message:    "new Function() — dynamic code generation: %s",
+		langs:      []Language{LangJavaScript, LangTypeScript},
+		cwe:        "CWE-94",
 	},
 	{
 		// setTimeout/setInterval with a string first argument (implicit eval)
-		pattern:  regexp.MustCompile(`(setTimeout|setInterval)\s*\(\s*["'\x60]`),
-		rule:     "mcp-code-eval",
-		severity: SeverityHigh,
-		message:  "setTimeout/setInterval with string argument (implicit eval): %s",
-		langs:    []Language{LangJavaScript, LangTypeScript},
-		cwe:      "CWE-94",
+		pattern:    regexp.MustCompile(`(setTimeout|setInterval)\s*\(\s*["'\x60]`),
+		rule:       "mcp-code-eval",
+		severity:   SeverityHigh,
+		confidence: ConfidenceMedium,
+		message:    "setTimeout/setInterval with string argument (implicit eval): %s",
+		langs:      []Language{LangJavaScript, LangTypeScript},
+		cwe:        "CWE-94",
 	},
 	{
 		// vm.runInNewContext / vm.runInThisContext — Node.js sandbox escape
-		pattern:  regexp.MustCompile(`vm\.(runInNewContext|runInThisContext)\s*\(`),
-		rule:     "mcp-sandbox-escape",
-		severity: SeverityCritical,
-		message:  "vm.%s — Node.js sandbox escape risk: %s",
-		langs:    []Language{LangJavaScript, LangTypeScript},
-		cwe:      "CWE-265",
+		pattern:    regexp.MustCompile(`vm\.(runInNewContext|runInThisContext)\s*\(`),
+		rule:       "mcp-sandbox-escape",
+		severity:   SeverityCritical,
+		confidence: ConfidenceMedium,
+		message:    "vm.%s — Node.js sandbox escape risk: %s",
+		langs:      []Language{LangJavaScript, LangTypeScript},
+		cwe:        "CWE-265",
 	},
 
 	// ── Destructive file operations — JavaScript/TypeScript ───────────────────
 
 	{
-		pattern:  regexp.MustCompile(`fs\.(unlinkSync|rmdir(?:Sync)?|rm(?:Sync)?)\s*\(`),
-		rule:     "mcp-destructive-fs",
-		severity: SeverityHigh,
-		message:  "Destructive filesystem operation: %s",
-		langs:    []Language{LangJavaScript, LangTypeScript},
-		cwe:      "CWE-73",
+		pattern:    regexp.MustCompile(`fs\.(unlinkSync|rmdir(?:Sync)?|rm(?:Sync)?)\s*\(`),
+		rule:       "mcp-destructive-fs",
+		severity:   SeverityHigh,
+		confidence: ConfidenceMedium,
+		message:    "Destructive filesystem operation: %s",
+		langs:      []Language{LangJavaScript, LangTypeScript},
+		cwe:        "CWE-73",
 	},
 
 	// ── Environment variable leakage — JavaScript/TypeScript ─────────────────
@@ -358,34 +379,37 @@ var sourcePatterns = []sourcePattern{
 	// Fix 6: HIGH only when env value flows into output (return, res.send, console.log,
 	// string interpolation in tool output, etc.).
 	{
-		pattern:  regexp.MustCompile(`(return|console\.(log|warn|error)|res\.(send|json|write)|\.push|\.join|` + "`" + `).*process\.env\.[A-Z_][A-Z0-9_]*`),
-		rule:     "mcp-env-leakage",
-		severity: SeverityHigh,
-		message:  "Environment variable leaked to output/response: %s",
-		langs:    []Language{LangJavaScript, LangTypeScript},
-		cwe:      "CWE-526",
+		pattern:    regexp.MustCompile(`(return|console\.(log|warn|error)|res\.(send|json|write)|\.push|\.join|` + "`" + `).*process\.env\.[A-Z_][A-Z0-9_]*`),
+		rule:       "mcp-env-leakage",
+		severity:   SeverityHigh,
+		confidence: ConfidenceMedium,
+		message:    "Environment variable leaked to output/response: %s",
+		langs:      []Language{LangJavaScript, LangTypeScript},
+		cwe:        "CWE-526",
 	},
 	// Fix 6: INFO when process.env is used in a standard config/auth pattern
 	// (assignment to a config variable, auth header construction, path join, etc.)
 	// These are normal usage patterns, not leakage.
 	{
-		pattern:  regexp.MustCompile(`process\.env\.[A-Z_][A-Z0-9_]*`),
-		rule:     "mcp-env-read",
-		severity: SeverityInfo,
-		message:  "Environment variable read (verify it is not exposed to output): %s",
-		langs:    []Language{LangJavaScript, LangTypeScript},
-		cwe:      "CWE-526",
+		pattern:    regexp.MustCompile(`process\.env\.[A-Z_][A-Z0-9_]*`),
+		rule:       "mcp-env-read",
+		severity:   SeverityInfo,
+		confidence: ConfidenceLow,
+		message:    "Environment variable read (verify it is not exposed to output): %s",
+		langs:      []Language{LangJavaScript, LangTypeScript},
+		cwe:        "CWE-526",
 	},
 
 	// ── Path traversal — all languages ───────────────────────────────────────
 
 	{
-		pattern:  regexp.MustCompile(`(?i)(open|readFile|readFileSync|writeFile|writeFileSync)\s*\([^)]*\+`),
-		rule:     "mcp-path-traversal-risk",
-		severity: SeverityHigh,
-		message:  "File operation with concatenated path (traversal risk): %s",
-		langs:    []Language{LangPython, LangJavaScript, LangTypeScript},
-		cwe:      "CWE-22",
+		pattern:    regexp.MustCompile(`(?i)(open|readFile|readFileSync|writeFile|writeFileSync)\s*\([^)]*\+`),
+		rule:       "mcp-path-traversal-risk",
+		severity:   SeverityHigh,
+		confidence: ConfidenceMedium,
+		message:    "File operation with concatenated path (traversal risk): %s",
+		langs:      []Language{LangPython, LangJavaScript, LangTypeScript},
+		cwe:        "CWE-22",
 	},
 
 	// ── Path containment bypass — JavaScript/TypeScript ──────────────────────
@@ -399,12 +423,13 @@ var sourcePatterns = []sourcePattern{
 		// Pattern: detect readFileSync used after a startsWith containment guard
 		// (both lines appear in the same file, so we catch the readFileSync call itself
 		// when no path.resolve/realpathSync is present — detected at directory level).
-		pattern:  regexp.MustCompile(`\.startsWith\s*\([^)]*(?:Dir|dir|Path|path|Root|root|Base|base)[^)]*\)`),
-		rule:     "mcp-path-containment-bypass",
-		severity: SeverityHigh,
-		message:  "startsWith() used as path containment check — bypassable via prefix confusion or symlinks (use path.resolve + path.sep): %s",
-		langs:    []Language{LangJavaScript, LangTypeScript},
-		cwe:      "CWE-22",
+		pattern:    regexp.MustCompile(`\.startsWith\s*\([^)]*(?:Dir|dir|Path|path|Root|root|Base|base)[^)]*\)`),
+		rule:       "mcp-path-containment-bypass",
+		severity:   SeverityHigh,
+		confidence: ConfidenceMedium,
+		message:    "startsWith() used as path containment check — bypassable via prefix confusion or symlinks (use path.resolve + path.sep): %s",
+		langs:      []Language{LangJavaScript, LangTypeScript},
+		cwe:        "CWE-22",
 	},
 
 	// ── Broken SSRF guard — JavaScript/TypeScript ────────────────────────────
@@ -414,12 +439,13 @@ var sourcePatterns = []sourcePattern{
 	// passes for targets like http://169.254.169.254/.
 
 	{
-		pattern:  regexp.MustCompile(`\.startsWith\s*\(\s*["'](10\.|192\.168\.|172\.)`),
-		rule:     "mcp-ssrf-broken-check",
-		severity: SeverityCritical,
-		message:  "startsWith() used to check for private IP — ineffective on full URLs (extract hostname first): %s",
-		langs:    []Language{LangJavaScript, LangTypeScript},
-		cwe:      "CWE-918",
+		pattern:    regexp.MustCompile(`\.startsWith\s*\(\s*["'](10\.|192\.168\.|172\.)`),
+		rule:       "mcp-ssrf-broken-check",
+		severity:   SeverityCritical,
+		confidence: ConfidenceHigh,
+		message:    "startsWith() used to check for private IP — ineffective on full URLs (extract hostname first): %s",
+		langs:      []Language{LangJavaScript, LangTypeScript},
+		cwe:        "CWE-918",
 	},
 
 	// ── MCP config with malicious shell commands — JSON ───────────────────────
@@ -429,20 +455,22 @@ var sourcePatterns = []sourcePattern{
 	// cradles and IEX patterns in any JSON-like file.
 
 	{
-		pattern:  regexp.MustCompile(`(?i)(IEX|Invoke-Expression)\s*\(`),
-		rule:     "mcp-config-rce",
-		severity: SeverityCritical,
-		message:  "PowerShell Invoke-Expression (IEX) in MCP config — possible rug-pull RCE payload: %s",
-		langs:    []Language{LangJSON},
-		cwe:      "CWE-78",
+		pattern:    regexp.MustCompile(`(?i)(IEX|Invoke-Expression)\s*\(`),
+		rule:       "mcp-config-rce",
+		severity:   SeverityCritical,
+		confidence: ConfidenceHigh,
+		message:    "PowerShell Invoke-Expression (IEX) in MCP config — possible rug-pull RCE payload: %s",
+		langs:      []Language{LangJSON},
+		cwe:        "CWE-78",
 	},
 	{
-		pattern:  regexp.MustCompile(`(?i)DownloadString\s*\(`),
-		rule:     "mcp-config-rce",
-		severity: SeverityCritical,
-		message:  "PowerShell DownloadString in MCP config — remote payload download pattern: %s",
-		langs:    []Language{LangJSON},
-		cwe:      "CWE-78",
+		pattern:    regexp.MustCompile(`(?i)DownloadString\s*\(`),
+		rule:       "mcp-config-rce",
+		severity:   SeverityCritical,
+		confidence: ConfidenceHigh,
+		message:    "PowerShell DownloadString in MCP config — remote payload download pattern: %s",
+		langs:      []Language{LangJSON},
+		cwe:        "CWE-78",
 	},
 
 	// ── Template injection — JavaScript/TypeScript ────────────────────────────
@@ -453,54 +481,59 @@ var sourcePatterns = []sourcePattern{
 
 	{
 		// exec.Command( followed by string concatenation on the same line
-		pattern:  regexp.MustCompile(`exec\.Command\s*\([^)]*\+`),
-		rule:     "mcp-cmd-injection",
-		severity: SeverityCritical,
-		message:  "exec.Command with string concatenation (injection risk): %s",
-		langs:    []Language{LangGo},
-		cwe:      "CWE-78",
+		pattern:    regexp.MustCompile(`exec\.Command\s*\([^)]*\+`),
+		rule:       "mcp-cmd-injection",
+		severity:   SeverityCritical,
+		confidence: ConfidenceHigh,
+		message:    "exec.Command with string concatenation (injection risk): %s",
+		langs:      []Language{LangGo},
+		cwe:        "CWE-78",
 	},
 	{
 		// exec.Command without concatenation — flag for review
-		pattern:  regexp.MustCompile(`exec\.Command\s*\(`),
-		rule:     "mcp-cmd-injection",
-		severity: SeverityHigh,
-		message:  "exec.Command usage (verify args do not contain user input): %s",
-		langs:    []Language{LangGo},
-		cwe:      "CWE-78",
+		pattern:    regexp.MustCompile(`exec\.Command\s*\(`),
+		rule:       "mcp-cmd-injection",
+		severity:   SeverityHigh,
+		confidence: ConfidenceMedium,
+		message:    "exec.Command usage (verify args do not contain user input): %s",
+		langs:      []Language{LangGo},
+		cwe:        "CWE-78",
 	},
 
 	// ── Go: destructive file operations ──────────────────────────────────────
 
 	{
-		pattern:  regexp.MustCompile(`os\.(Remove|RemoveAll)\s*\(`),
-		rule:     "mcp-destructive-fs",
-		severity: SeverityHigh,
-		message:  "os.%s — file/directory deletion: %s",
-		langs:    []Language{LangGo},
-		cwe:      "CWE-73",
+		pattern:    regexp.MustCompile(`os\.(Remove|RemoveAll)\s*\(`),
+		rule:       "mcp-destructive-fs",
+		severity:   SeverityHigh,
+		confidence: ConfidenceMedium,
+		message:    "os.%s — file/directory deletion: %s",
+		langs:      []Language{LangGo},
+		cwe:        "CWE-73",
 	},
 
 	// ── Go: XSS via template.HTML ────────────────────────────────────────────
 
 	{
-		pattern:  regexp.MustCompile(`template\.HTML\s*\(`),
-		rule:     "mcp-xss-risk",
-		severity: SeverityHigh,
-		message:  "template.HTML() type conversion bypasses auto-escaping (XSS risk): %s",
-		langs:    []Language{LangGo},
-		cwe:      "CWE-79",
+		pattern:    regexp.MustCompile(`template\.HTML\s*\(`),
+		rule:       "mcp-xss-risk",
+		severity:   SeverityHigh,
+		confidence: ConfidenceMedium,
+		message:    "template.HTML() type conversion bypasses auto-escaping (XSS risk): %s",
+		langs:      []Language{LangGo},
+		cwe:        "CWE-79",
 	},
 
 	// ── Go: outbound connections ──────────────────────────────────────────────
 
 	{
-		pattern:  regexp.MustCompile(`net\.(Dial|DialTimeout)\s*\(`),
-		rule:     "mcp-outbound-connection",
-		severity: SeverityWarning,
-		message:  "net.Dial outbound TCP/UDP connection: %s",
-		langs:    []Language{LangGo},
-		cwe:      "CWE-918",
+		pattern:    regexp.MustCompile(`net\.(Dial|DialTimeout)\s*\(`),
+		rule:       "mcp-outbound-connection",
+		severity:   SeverityWarning,
+		confidence: ConfidenceLow,
+		message:    "net.Dial outbound TCP/UDP connection: %s",
+		langs:      []Language{LangGo},
+		cwe:        "CWE-918",
 	},
 
 	// ── Hardcoded credentials ─────────────────────────────────────────────────
@@ -509,6 +542,7 @@ var sourcePatterns = []sourcePattern{
 		pattern:      regexp.MustCompile(`(?i)(api[_-]?key|secret|password|token)\s*[:=]\s*["'][a-zA-Z0-9+/=_-]{16,}["']`),
 		rule:         "mcp-hardcoded-secret",
 		severity:     SeverityCritical,
+		confidence:   ConfidenceMedium,
 		message:      "Hardcoded credential: %s",
 		langs:        []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
 		cwe:          "CWE-798",
@@ -518,6 +552,7 @@ var sourcePatterns = []sourcePattern{
 		pattern:      regexp.MustCompile(`AKIA[A-Z0-9]{16}`),
 		rule:         "mcp-hardcoded-aws-key",
 		severity:     SeverityCritical,
+		confidence:   ConfidenceHigh,
 		message:      "Hardcoded AWS access key: %s",
 		langs:        []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
 		cwe:          "CWE-798",
@@ -527,6 +562,7 @@ var sourcePatterns = []sourcePattern{
 		pattern:      regexp.MustCompile(`sk-[a-zA-Z0-9]{20,}`),
 		rule:         "mcp-hardcoded-api-key",
 		severity:     SeverityCritical,
+		confidence:   ConfidenceHigh,
 		message:      "Hardcoded API key (OpenAI format): %s",
 		langs:        []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
 		cwe:          "CWE-798",
@@ -536,6 +572,7 @@ var sourcePatterns = []sourcePattern{
 		pattern:      regexp.MustCompile(`ghp_[a-zA-Z0-9]{36}`),
 		rule:         "mcp-hardcoded-github-pat",
 		severity:     SeverityHigh,
+		confidence:   ConfidenceHigh,
 		message:      "Hardcoded GitHub PAT: %s",
 		langs:        []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
 		cwe:          "CWE-798",
@@ -547,6 +584,7 @@ var sourcePatterns = []sourcePattern{
 	{
 		pattern:      regexp.MustCompile(`Bearer\s+[a-zA-Z0-9\-._~+/]{20,}=*`),
 		rule:         "mcp-hardcoded-bearer-token",
+		confidence:   ConfidenceHigh,
 		severity:     SeverityCritical,
 		message:      "Hardcoded Bearer token: %s",
 		langs:        []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
@@ -557,31 +595,34 @@ var sourcePatterns = []sourcePattern{
 	// ── Cross-language: private key content ──────────────────────────────────
 
 	{
-		pattern:  regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`),
-		rule:     "mcp-hardcoded-private-key",
-		severity: SeverityCritical,
-		message:  "Private key material embedded in source code: %s",
-		langs:    []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
-		cwe:      "CWE-798",
+		pattern:    regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`),
+		rule:       "mcp-hardcoded-private-key",
+		severity:   SeverityCritical,
+		confidence: ConfidenceHigh,
+		message:    "Private key material embedded in source code: %s",
+		langs:      []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
+		cwe:        "CWE-798",
 	},
 
 	// ── Cross-language: webhook URLs ─────────────────────────────────────────
 
 	{
-		pattern:  regexp.MustCompile(`hooks\.slack\.com/services/`),
-		rule:     "mcp-hardcoded-webhook",
-		severity: SeverityHigh,
-		message:  "Hardcoded Slack webhook URL: %s",
-		langs:    []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
-		cwe:      "CWE-798",
+		pattern:    regexp.MustCompile(`hooks\.slack\.com/services/`),
+		rule:       "mcp-hardcoded-webhook",
+		severity:   SeverityHigh,
+		confidence: ConfidenceHigh,
+		message:    "Hardcoded Slack webhook URL: %s",
+		langs:      []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
+		cwe:        "CWE-798",
 	},
 	{
-		pattern:  regexp.MustCompile(`discord\.com/api/webhooks/`),
-		rule:     "mcp-hardcoded-webhook",
-		severity: SeverityHigh,
-		message:  "Hardcoded Discord webhook URL: %s",
-		langs:    []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
-		cwe:      "CWE-798",
+		pattern:    regexp.MustCompile(`discord\.com/api/webhooks/`),
+		rule:       "mcp-hardcoded-webhook",
+		severity:   SeverityHigh,
+		confidence: ConfidenceHigh,
+		message:    "Hardcoded Discord webhook URL: %s",
+		langs:      []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
+		cwe:        "CWE-798",
 	},
 
 	// ── Cross-language: Stripe live secret key ────────────────────────────────
@@ -590,6 +631,7 @@ var sourcePatterns = []sourcePattern{
 		pattern:      regexp.MustCompile(`sk_live_[a-zA-Z0-9]{20,}`),
 		rule:         "mcp-hardcoded-stripe-key",
 		severity:     SeverityCritical,
+		confidence:   ConfidenceHigh,
 		message:      "Hardcoded Stripe live secret key: %s",
 		langs:        []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
 		cwe:          "CWE-798",
@@ -603,6 +645,7 @@ var sourcePatterns = []sourcePattern{
 		pattern:      regexp.MustCompile(`SK[a-zA-Z0-9]{32}`),
 		rule:         "mcp-hardcoded-twilio-key",
 		severity:     SeverityHigh,
+		confidence:   ConfidenceMedium,
 		message:      "Possible hardcoded Twilio API key (SK...): %s",
 		langs:        []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
 		cwe:          "CWE-798",
@@ -613,6 +656,7 @@ var sourcePatterns = []sourcePattern{
 		pattern:      regexp.MustCompile(`AC[a-f0-9]{32}`),
 		rule:         "mcp-hardcoded-twilio-sid",
 		severity:     SeverityHigh,
+		confidence:   ConfidenceMedium,
 		message:      "Possible hardcoded Twilio account SID (AC...): %s",
 		langs:        []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
 		cwe:          "CWE-798",
@@ -739,13 +783,21 @@ func (s *sastAnalyzer) AnalyzeFile(path string, lang Language) []Finding {
 				severity = SeverityInfo
 			}
 
+			// Apply confidence: default to Medium when not explicitly set.
+			confidence := sp.confidence
+			if confidence == 0 {
+				confidence = ConfidenceMedium
+			}
+
 			findings = append(findings, Finding{
-				Rule:     sp.rule,
-				Severity: severity,
-				Message:  fmt.Sprintf(sp.message, matched),
-				File:     path,
-				Line:     lineNum + 1,
-				CWE:      sp.cwe,
+				Rule:            sp.rule,
+				Severity:        severity,
+				Confidence:      confidence,
+				ConfidenceLabel: confidence.String(),
+				Message:         fmt.Sprintf(sp.message, matched),
+				File:            path,
+				Line:            lineNum + 1,
+				CWE:             sp.cwe,
 			})
 		}
 	}
