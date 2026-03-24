@@ -158,6 +158,37 @@ func (m *MockNetProbe) Probe(cmd string, args []string, _ time.Duration) ([]prov
 	return m.ProbeResult, m.ProbeErr
 }
 
+// MockSuppressor is a configurable mock for providers.Suppressor.
+type MockSuppressor struct {
+	LoadIgnoreFileErr error
+	FilterKept        []providers.Finding
+	FilterSuppressed  []providers.Finding
+	InlineSuppressed  bool
+
+	LoadCount   atomic.Int32
+	FilterCount atomic.Int32
+	InlineCount atomic.Int32
+}
+
+func (m *MockSuppressor) LoadIgnoreFile(_ string) error {
+	m.LoadCount.Add(1)
+	return m.LoadIgnoreFileErr
+}
+
+func (m *MockSuppressor) Filter(findings []providers.Finding) ([]providers.Finding, []providers.Finding) {
+	m.FilterCount.Add(1)
+	if m.FilterKept != nil || m.FilterSuppressed != nil {
+		return m.FilterKept, m.FilterSuppressed
+	}
+	// Default: keep all, suppress none
+	return findings, nil
+}
+
+func (m *MockSuppressor) IsInlineSuppressed(_ providers.Finding) bool {
+	m.InlineCount.Add(1)
+	return m.InlineSuppressed
+}
+
 // MockPinStore is a configurable mock for providers.PinStore.
 type MockPinStore struct {
 	PinErr       error
