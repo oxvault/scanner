@@ -233,8 +233,10 @@ func checkNPMDep(name, rawVersion, file string) []Finding {
 					"%s@%s is vulnerable (%s, CVSS %.1f): %s",
 					name, version, vuln.CVE, vuln.CVSS, vuln.Description,
 				),
-				File: file,
-				Fix:  fmt.Sprintf("Upgrade %s above %s to fix %s", name, vuln.MaxAffected, vuln.CVE),
+				File:       file,
+				Fix:        fmt.Sprintf("Upgrade %s above %s to fix %s", name, vuln.MaxAffected, vuln.CVE),
+				CWE:        "CWE-1395",
+				References: []string{vuln.CVE},
 			})
 		}
 	}
@@ -297,9 +299,11 @@ func (d *depAuditor) auditRequirementsTxt(path string) []Finding {
 						"%s==%s is vulnerable (%s, CVSS %.1f): %s",
 						name, version, vuln.CVE, vuln.CVSS, vuln.Description,
 					),
-					File: path,
-					Line: lineNum + 1,
-					Fix:  fmt.Sprintf("Upgrade %s above %s to fix %s", name, vuln.MaxAffected, vuln.CVE),
+					File:       path,
+					Line:       lineNum + 1,
+					Fix:        fmt.Sprintf("Upgrade %s above %s to fix %s", name, vuln.MaxAffected, vuln.CVE),
+					CWE:        "CWE-1395",
+					References: []string{vuln.CVE},
 				})
 			}
 		}
@@ -362,9 +366,11 @@ func (d *depAuditor) auditPyprojectToml(path string) []Finding {
 						"%s==%s in pyproject.toml is vulnerable (%s, CVSS %.1f): %s",
 						name, version, vuln.CVE, vuln.CVSS, vuln.Description,
 					),
-					File: path,
-					Line: lineNum + 1,
-					Fix:  fmt.Sprintf("Upgrade %s above %s to fix %s", name, vuln.MaxAffected, vuln.CVE),
+					File:       path,
+					Line:       lineNum + 1,
+					Fix:        fmt.Sprintf("Upgrade %s above %s to fix %s", name, vuln.MaxAffected, vuln.CVE),
+					CWE:        "CWE-1395",
+					References: []string{vuln.CVE},
 				})
 			}
 		}

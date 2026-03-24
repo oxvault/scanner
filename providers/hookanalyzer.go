@@ -15,6 +15,7 @@ type hookPattern struct {
 	rule     string
 	severity Severity
 	message  string
+	cwe      string
 }
 
 // hookInstallScripts is the set of package.json script keys that run during install.
@@ -35,6 +36,7 @@ var hookPatterns = []hookPattern{
 		rule:     "mcp-install-hook-pipe-to-shell",
 		severity: SeverityCritical,
 		message:  "Install script pipes remote download to shell: %s",
+		cwe:      "CWE-506",
 	},
 	{
 		// eval(...) with dynamic content
@@ -42,6 +44,7 @@ var hookPatterns = []hookPattern{
 		rule:     "mcp-install-hook-eval",
 		severity: SeverityCritical,
 		message:  "Install script uses eval() for dynamic code execution: %s",
+		cwe:      "CWE-506",
 	},
 	{
 		// Base64 decode piped to eval or exec: echo ... | base64 -d | sh
@@ -49,6 +52,7 @@ var hookPatterns = []hookPattern{
 		rule:     "mcp-install-hook-base64-exec",
 		severity: SeverityCritical,
 		message:  "Install script decodes base64 and executes result: %s",
+		cwe:      "CWE-506",
 	},
 	{
 		// node -e "..." inline code execution in shell script value
@@ -56,6 +60,7 @@ var hookPatterns = []hookPattern{
 		rule:     "mcp-install-hook-node-inline",
 		severity: SeverityCritical,
 		message:  "Install script uses node -e for inline code execution: %s",
+		cwe:      "CWE-506",
 	},
 	{
 		// python -c "..." inline code execution
@@ -63,6 +68,7 @@ var hookPatterns = []hookPattern{
 		rule:     "mcp-install-hook-python-inline",
 		severity: SeverityCritical,
 		message:  "Install script uses python -c for inline code execution: %s",
+		cwe:      "CWE-506",
 	},
 	{
 		// sh -c "..." shell command execution
@@ -70,6 +76,7 @@ var hookPatterns = []hookPattern{
 		rule:     "mcp-install-hook-sh-inline",
 		severity: SeverityCritical,
 		message:  "Install script uses sh -c for inline shell execution: %s",
+		cwe:      "CWE-506",
 	},
 	{
 		// child_process.exec in referenced JS/TS files
@@ -77,6 +84,7 @@ var hookPatterns = []hookPattern{
 		rule:     "mcp-install-hook-child-process-exec",
 		severity: SeverityCritical,
 		message:  "Install script file uses child_process.exec (arbitrary command execution): %s",
+		cwe:      "CWE-506",
 	},
 	{
 		// Binary download to a path then chmod+x or direct execution
@@ -84,6 +92,7 @@ var hookPatterns = []hookPattern{
 		rule:     "mcp-install-hook-binary-download",
 		severity: SeverityCritical,
 		message:  "Install script downloads and executes a binary: %s",
+		cwe:      "CWE-506",
 	},
 
 	// ── HIGH: Suspicious but possibly legitimate ──────────────────────────────
@@ -94,6 +103,7 @@ var hookPatterns = []hookPattern{
 		rule:     "mcp-install-hook-outbound-download",
 		severity: SeverityHigh,
 		message:  "Install script fetches external URL (data exfiltration or supply-chain risk): %s",
+		cwe:      "CWE-506",
 	},
 	{
 		// Environment variable access combined with a network call on the same line
@@ -101,6 +111,7 @@ var hookPatterns = []hookPattern{
 		rule:     "mcp-install-hook-env-exfil",
 		severity: SeverityHigh,
 		message:  "Install script reads environment variable and makes network call (possible exfiltration): %s",
+		cwe:      "CWE-506",
 	},
 	{
 		// fs.readFile on sensitive credential paths in referenced scripts
@@ -108,6 +119,7 @@ var hookPatterns = []hookPattern{
 		rule:     "mcp-install-hook-sensitive-file-read",
 		severity: SeverityHigh,
 		message:  "Install script file reads sensitive credential path: %s",
+		cwe:      "CWE-506",
 	},
 
 	// ── WARNING: Worth reviewing ──────────────────────────────────────────────
@@ -118,6 +130,7 @@ var hookPatterns = []hookPattern{
 		rule:     "mcp-install-hook-network-call",
 		severity: SeverityWarning,
 		message:  "Install script makes network request (packages should not phone home during install): %s",
+		cwe:      "CWE-506",
 	},
 	{
 		// File system writes outside package directory (writes to absolute paths)
@@ -125,6 +138,7 @@ var hookPatterns = []hookPattern{
 		rule:     "mcp-install-hook-fs-write-absolute",
 		severity: SeverityWarning,
 		message:  "Install script writes to absolute filesystem path outside package directory: %s",
+		cwe:      "CWE-506",
 	},
 	{
 		// process.env access in install scripts
@@ -132,6 +146,7 @@ var hookPatterns = []hookPattern{
 		rule:     "mcp-install-hook-env-access",
 		severity: SeverityWarning,
 		message:  "Install script accesses environment variables (verify no sensitive data is read): %s",
+		cwe:      "CWE-506",
 	},
 }
 
@@ -143,6 +158,7 @@ var pypiPatterns = []hookPattern{
 		rule:     "mcp-install-hook-pypi-cmdclass",
 		severity: SeverityHigh,
 		message:  "setup.py overrides install command via cmdclass (code runs during pip install): %s",
+		cwe:      "CWE-506",
 	},
 	{
 		// pyproject.toml cmdclass override
@@ -150,6 +166,7 @@ var pypiPatterns = []hookPattern{
 		rule:     "mcp-install-hook-pypi-cmdclass",
 		severity: SeverityHigh,
 		message:  "pyproject.toml defines setuptools cmdclass override (code runs during pip install): %s",
+		cwe:      "CWE-506",
 	},
 }
 
@@ -251,6 +268,7 @@ func scanScriptContent(script, pkgFile, hookName string) []Finding {
 				Severity: hp.severity,
 				Message:  fmt.Sprintf(hp.message, trimmed),
 				File:     pkgFile,
+				CWE:      hp.cwe,
 				// Line is not available from JSON value; omit.
 			})
 		}
@@ -298,6 +316,7 @@ func scanReferencedFile(path, hookName string) []Finding {
 					Message:  fmt.Sprintf(hp.message, trimmed),
 					File:     path,
 					Line:     lineNum + 1,
+					CWE:      hp.cwe,
 				})
 			}
 		}
@@ -329,6 +348,7 @@ func (h *hookAnalyzer) analyzePythonSetup(path string, patterns []hookPattern) [
 					Message:  fmt.Sprintf(hp.message, trimmed),
 					File:     path,
 					Line:     lineNum + 1,
+					CWE:      hp.cwe,
 				})
 			}
 		}
@@ -360,6 +380,7 @@ func (h *hookAnalyzer) analyzePyproject(path string) []Finding {
 					Message:  fmt.Sprintf(hp.message, trimmed),
 					File:     path,
 					Line:     lineNum + 1,
+					CWE:      hp.cwe,
 				})
 			}
 		}

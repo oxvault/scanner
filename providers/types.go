@@ -75,13 +75,15 @@ const (
 
 // Finding represents a single security finding
 type Finding struct {
-	Rule     string   `json:"rule"`
-	Severity Severity `json:"severity"`
-	Message  string   `json:"message"`
-	File     string   `json:"file,omitempty"`
-	Line     int      `json:"line,omitempty"`
-	Tool     string   `json:"tool,omitempty"`
-	Fix      string   `json:"fix,omitempty"`
+	Rule       string   `json:"rule"`
+	Severity   Severity `json:"severity"`
+	Message    string   `json:"message"`
+	File       string   `json:"file,omitempty"`
+	Line       int      `json:"line,omitempty"`
+	Tool       string   `json:"tool,omitempty"`
+	Fix        string   `json:"fix,omitempty"`
+	CWE        string   `json:"cwe,omitempty"`        // e.g., "CWE-78"
+	References []string `json:"references,omitempty"` // CVE IDs, URLs
 }
 
 // MCPTool represents a tool from the MCP tools/list response
