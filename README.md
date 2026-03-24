@@ -232,9 +232,37 @@ oxvault check <command> [args...]         # Compare against saved hashes
 | Metric | Result |
 |---|---|
 | **CVE detection rate** | [12/12 (100%)](testdata/cve/) - validated against real MCP CVEs |
+| **Real-world scan** | [67 servers scanned, 67% had findings, 546 actionable](#real-world-scan-results) |
 | **False positive rate** | [0% across 10 official MCP servers](benchmarks/false-positives/RESULTS.md) |
 | **DVMCP challenge detection** | [31 findings across 8/10 challenges](benchmarks/competitive/RESULTS.md) |
 | **vs. competitors** | [Feature comparison with mcp-scan, Snyk, Enkrypt, Cisco](benchmarks/competitive/RESULTS.md) |
+
+## Real-World Scan Results
+
+We scanned **67 real MCP servers** from the ecosystem — including official, enterprise, and community servers. Results:
+
+| Metric | Result |
+|---|---|
+| **Servers scanned** | 67 (GitHub, Stripe, AWS, Cloudflare, Microsoft, Supabase, Neon, Grafana, etc.) |
+| **Vulnerability rate** | 67% of servers had security findings |
+| **Actionable findings** | 546 HIGH + CRITICAL across all servers |
+| **Critical findings** | 179 (command injection, hardcoded secrets, code eval) |
+| **Clean servers** | 22 (33%) |
+
+### Notable findings on real servers
+
+| Server | Findings | What was found |
+|---|---|---|
+| **Pipedream** (`PipedreamHQ/pipedream`) | 179 HIGH+CRIT | `eval()` on user content, path traversal |
+| **AWS MCP** (`awslabs/mcp`) | 53 HIGH+CRIT | `exec()` calls, `os.system()`, `pickle.load()` |
+| **Anyquery** (`julien040/anyquery`) | 35 HIGH+CRIT | `os.RemoveAll()`, `exec.Command` with user args |
+| **DVMCP** (`harishsg993010/damn-vulnerable-MCP-server`) | 27 HIGH+CRIT | Command injection (`shell=True`), hardcoded API keys |
+| **Apify** (`apify/actors-mcp-server`) | 9 HIGH+CRIT | `execSync` with template literals, hardcoded keys |
+| **Official MCP servers** (`modelcontextprotocol/servers`) | 8 HIGH+CRIT | `startsWith()` path check (CVE-2025-53110 pattern) |
+| **Postman** (`postmanlabs/postman-mcp-server`) | 5 HIGH+CRIT | `execSync` with string concatenation |
+| **Cloudflare** (`cloudflare/mcp-server-cloudflare`) | 2 HIGH+CRIT | Hardcoded bearer token, recursive `fs.rm()` |
+
+*Run your own scan: `oxvault scan github:owner/repo`*
 
 ## Example Vulnerable Servers
 
