@@ -29,10 +29,13 @@ brews:
   - repository:
       owner: oxvault
       name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     directory: Formula
+    name: oxvault
     homepage: https://github.com/oxvault/scanner
     description: "MCP security scanner — detect vulnerabilities in AI tool integrations before they run"
     license: "Apache-2.0"
+    skip_upload: "{{ if .Env.HOMEBREW_TAP_TOKEN }}false{{ else }}true{{ end }}"
     test: |
       system "#{bin}/oxvault", "version"
 
