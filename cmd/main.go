@@ -43,7 +43,7 @@ const asciiLogo = `
 
 func main() {
 	root := &cobra.Command{
-		Use:     "oxvault",
+		Use:     "Oxvault",
 		Short:   "MCP security scanner — detect vulnerabilities in AI tool integrations",
 		Version: version,
 		Run: func(cmd *cobra.Command, args []string) {

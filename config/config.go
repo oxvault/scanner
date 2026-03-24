@@ -29,7 +29,7 @@ type Config struct {
 func DefaultConfig() *Config {
 	return &Config{
 		OutputFormat: providers.FormatTerminal,
-		FailOn:       "critical",
+		FailOn:       providers.RiskTierCritical.String(),
 		PinDir:       defaultPinDir(),
 	}
 }

@@ -1,0 +1,219 @@
+[
+  {
+    "rule": "mcp-hardcoded-api-key",
+    "severity": 3,
+    "message": "Hardcoded API key (OpenAI format): API Key: sk-a1b2c3d4e5f6g7h8i9j0",
+    "file": "/tmp/oxvault-scan-578932092/challenges/easy/challenge1/server.py",
+    "line": 15
+  },
+  {
+    "rule": "mcp-hardcoded-api-key",
+    "severity": 3,
+    "message": "Hardcoded API key (OpenAI format): API Key: sk-a1b2c3d4e5f6g7h8i9j0",
+    "file": "/tmp/oxvault-scan-578932092/challenges/easy/challenge1/server_sse.py",
+    "line": 24
+  },
+  {
+    "rule": "mcp-cmd-injection",
+    "severity": 3,
+    "message": "Subprocess with shell=True: result = subprocess.check_output(command, shell=True, text=True)",
+    "file": "/tmp/oxvault-scan-578932092/challenges/easy/challenge2/server_sse.py",
+    "line": 31
+  },
+  {
+    "rule": "mcp-cmd-injection",
+    "severity": 2,
+    "message": "subprocess.check_output usage (verify shell=False and safe args): result = subprocess.check_output(command, shell=True, text=True)",
+    "file": "/tmp/oxvault-scan-578932092/challenges/easy/challenge2/server_sse.py",
+    "line": 31
+  },
+  {
+    "rule": "mcp-destructive-fs",
+    "severity": 2,
+    "message": "os.remove() — file deletion: os.remove(path)",
+    "file": "/tmp/oxvault-scan-578932092/challenges/easy/challenge3/server_sse.py",
+    "line": 42
+  },
+  {
+    "rule": "mcp-cmd-injection",
+    "severity": 3,
+    "message": "Subprocess with shell=True: result = subprocess.check_output(command, shell=True, stderr=subprocess.STDOUT)",
+    "file": "/tmp/oxvault-scan-578932092/challenges/hard/challenge10/server.py",
+    "line": 265
+  },
+  {
+    "rule": "mcp-cmd-injection",
+    "severity": 2,
+    "message": "subprocess.check_output usage (verify shell=False and safe args): result = subprocess.check_output(command, shell=True, stderr=subprocess.STDOUT)",
+    "file": "/tmp/oxvault-scan-578932092/challenges/hard/challenge10/server.py",
+    "line": 265
+  },
+  {
+    "rule": "mcp-hardcoded-aws-key",
+    "severity": 3,
+    "message": "Hardcoded AWS access key: AccessKeyID = AKIAIOSFODNN7EXAMPLE",
+    "file": "/tmp/oxvault-scan-578932092/challenges/hard/challenge10/server.py",
+    "line": 36
+  },
+  {
+    "rule": "mcp-cmd-injection",
+    "severity": 3,
+    "message": "Subprocess with shell=True: result = subprocess.check_output(command, shell=True, stderr=subprocess.STDOUT)",
+    "file": "/tmp/oxvault-scan-578932092/challenges/hard/challenge8/server.py",
+    "line": 110
+  },
+  {
+    "rule": "mcp-cmd-injection",
+    "severity": 2,
+    "message": "subprocess.check_output usage (verify shell=False and safe args): result = subprocess.check_output([sys.executable, temp_file_path], stderr=subprocess.STDOUT)",
+    "file": "/tmp/oxvault-scan-578932092/challenges/hard/challenge8/server.py",
+    "line": 74
+  },
+  {
+    "rule": "mcp-cmd-injection",
+    "severity": 2,
+    "message": "subprocess.check_output usage (verify shell=False and safe args): result = subprocess.check_output(command, shell=True, stderr=subprocess.STDOUT)",
+    "file": "/tmp/oxvault-scan-578932092/challenges/hard/challenge8/server.py",
+    "line": 110
+  },
+  {
+    "rule": "mcp-hardcoded-aws-key",
+    "severity": 3,
+    "message": "Hardcoded AWS access key: Access Key ID: AKIAIOSFODNN7EXAMPLE",
+    "file": "/tmp/oxvault-scan-578932092/challenges/hard/challenge8/server.py",
+    "line": 24
+  },
+  {
+    "rule": "mcp-code-eval",
+    "severity": 3,
+    "message": "Dynamic code evaluation: # Vulnerable: using eval() on user input",
+    "file": "/tmp/oxvault-scan-578932092/challenges/hard/challenge8/server_sse.py",
+    "line": 23
+  },
+  {
+    "rule": "mcp-code-eval",
+    "severity": 3,
+    "message": "Dynamic code evaluation: result = eval(expression)",
+    "file": "/tmp/oxvault-scan-578932092/challenges/hard/challenge8/server_sse.py",
+    "line": 26
+  },
+  {
+    "rule": "mcp-cmd-injection",
+    "severity": 3,
+    "message": "Subprocess with shell=True: result = subprocess.check_output(command, shell=True, stderr=subprocess.STDOUT)",
+    "file": "/tmp/oxvault-scan-578932092/challenges/hard/challenge9/server.py",
+    "line": 55
+  },
+  {
+    "rule": "mcp-cmd-injection",
+    "severity": 3,
+    "message": "Subprocess with shell=True: result = subprocess.check_output(command, shell=True, stderr=subprocess.STDOUT)",
+    "file": "/tmp/oxvault-scan-578932092/challenges/hard/challenge9/server.py",
+    "line": 88
+  },
+  {
+    "rule": "mcp-cmd-injection",
+    "severity": 3,
+    "message": "Subprocess with shell=True: result = subprocess.check_output(command, shell=True, stderr=subprocess.STDOUT)",
+    "file": "/tmp/oxvault-scan-578932092/challenges/hard/challenge9/server.py",
+    "line": 127
+  },
+  {
+    "rule": "mcp-cmd-injection",
+    "severity": 3,
+    "message": "Subprocess with shell=True: result = subprocess.check_output(command, shell=True, stderr=subprocess.STDOUT)",
+    "file": "/tmp/oxvault-scan-578932092/challenges/hard/challenge9/server.py",
+    "line": 189
+  },
+  {
+    "rule": "mcp-cmd-injection",
+    "severity": 2,
+    "message": "subprocess.check_output usage (verify shell=False and safe args): result = subprocess.check_output(command, shell=True, stderr=subprocess.STDOUT)",
+    "file": "/tmp/oxvault-scan-578932092/challenges/hard/challenge9/server.py",
+    "line": 55
+  },
+  {
+    "rule": "mcp-cmd-injection",
+    "severity": 2,
+    "message": "subprocess.check_output usage (verify shell=False and safe args): result = subprocess.check_output(command, shell=True, stderr=subprocess.STDOUT)",
+    "file": "/tmp/oxvault-scan-578932092/challenges/hard/challenge9/server.py",
+    "line": 88
+  },
+  {
+    "rule": "mcp-cmd-injection",
+    "severity": 2,
+    "message": "subprocess.check_output usage (verify shell=False and safe args): result = subprocess.check_output(command, shell=True, stderr=subprocess.STDOUT)",
+    "file": "/tmp/oxvault-scan-578932092/challenges/hard/challenge9/server.py",
+    "line": 127
+  },
+  {
+    "rule": "mcp-cmd-injection",
+    "severity": 2,
+    "message": "subprocess.check_output usage (verify shell=False and safe args): result = subprocess.check_output(command, shell=True, stderr=subprocess.STDOUT)",
+    "file": "/tmp/oxvault-scan-578932092/challenges/hard/challenge9/server.py",
+    "line": 189
+  },
+  {
+    "rule": "mcp-hardcoded-aws-key",
+    "severity": 3,
+    "message": "Hardcoded AWS access key: - AWS_ACCESS_KEY_ID: AKIA5EXAMPLE12345678",
+    "file": "/tmp/oxvault-scan-578932092/challenges/medium/challenge4/server.py",
+    "line": 38
+  },
+  {
+    "rule": "mcp-code-eval",
+    "severity": 3,
+    "message": "Dynamic code evaluation: result = eval(clean_expr, {\"__builtins__\": {}})",
+    "file": "/tmp/oxvault-scan-578932092/challenges/medium/challenge5/server.py",
+    "line": 95
+  },
+  {
+    "rule": "mcp-code-eval",
+    "severity": 3,
+    "message": "Dynamic code evaluation: result = eval(expression, {\"__builtins__\": {}})",
+    "file": "/tmp/oxvault-scan-578932092/challenges/medium/challenge5/server.py",
+    "line": 104
+  },
+  {
+    "rule": "mcp-code-eval",
+    "severity": 3,
+    "message": "Dynamic code evaluation: result = eval(clean_expr, {\"__builtins__\": {}})",
+    "file": "/tmp/oxvault-scan-578932092/challenges/medium/challenge5/server.py",
+    "line": 187
+  },
+  {
+    "rule": "mcp-code-eval",
+    "severity": 3,
+    "message": "Dynamic code evaluation: result = eval(expression, {\"__builtins__\": {}})",
+    "file": "/tmp/oxvault-scan-578932092/challenges/medium/challenge5/server.py",
+    "line": 196
+  },
+  {
+    "rule": "mcp-hardcoded-stripe-key",
+    "severity": 3,
+    "message": "Hardcoded Stripe live secret key: API Key: sk_live_REDACTED",
+    "file": "/tmp/oxvault-scan-578932092/challenges/medium/challenge5/server.py",
+    "line": 17
+  },
+  {
+    "rule": "mcp-hardcoded-stripe-key",
+    "severity": 3,
+    "message": "Hardcoded Stripe live secret key: API Key: sk_live_REDACTED",
+    "file": "/tmp/oxvault-scan-578932092/challenges/medium/challenge5/server.py",
+    "line": 123
+  },
+  {
+    "rule": "mcp-cmd-injection",
+    "severity": 3,
+    "message": "Subprocess with shell=True: result = subprocess.check_output(command, shell=True, stderr=subprocess.STDOUT)",
+    "file": "/tmp/oxvault-scan-578932092/common/utils.py",
+    "line": 33
+  },
+  {
+    "rule": "mcp-cmd-injection",
+    "severity": 2,
+    "message": "subprocess.check_output usage (verify shell=False and safe args): result = subprocess.check_output(command, shell=True, stderr=subprocess.STDOUT)",
+    "file": "/tmp/oxvault-scan-578932092/common/utils.py",
+    "line": 33
+  }
+]
