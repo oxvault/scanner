@@ -1,0 +1,16 @@
+[
+  {
+    "rule": "mcp-cmd-injection",
+    "severity": 3,
+    "message": "Subprocess with shell=True: subprocess.run(\"pkill Xvfb; pkill tint2\", shell=True)  # noqa: ASYNC221",
+    "file": "/tmp/tmp.iTaQM5zXem/computer-use-demo/computer_use_demo/streamlit.py",
+    "line": 264
+  },
+  {
+    "rule": "mcp-cmd-injection",
+    "severity": 3,
+    "message": "Subprocess with shell=True: subprocess.run(\"./start_all.sh\", shell=True)  # noqa: ASYNC221",
+    "file": "/tmp/tmp.iTaQM5zXem/computer-use-demo/computer_use_demo/streamlit.py",
+    "line": 266
+  }
+]

@@ -1,0 +1,23 @@
+[
+  {
+    "rule": "mcp-path-containment-bypass",
+    "severity": 2,
+    "message": "startsWith() used as path containment check — bypassable via prefix confusion or symlinks (use path.resolve + path.sep): uri.toString().startsWith(textUriBase) \u0026\u0026",
+    "file": "/tmp/tmp.cz3srgQCTf/src/everything/resources/templates.ts",
+    "line": 142
+  },
+  {
+    "rule": "mcp-path-containment-bypass",
+    "severity": 2,
+    "message": "startsWith() used as path containment check — bypassable via prefix confusion or symlinks (use path.resolve + path.sep): uri.toString().startsWith(blobUriBase)",
+    "file": "/tmp/tmp.cz3srgQCTf/src/everything/resources/templates.ts",
+    "line": 143
+  },
+  {
+    "rule": "mcp-network-egress",
+    "severity": 1,
+    "message": "Tool makes outbound network call via fetch",
+    "file": "/tmp/tmp.cz3srgQCTf/src/everything/tools/gzip-file-as-resource.ts",
+    "line": 190
+  }
+]
