@@ -2,6 +2,8 @@ package providers
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -866,5 +868,100 @@ func TestReport_SARIF_NoCWE_NoProperties(t *testing.T) {
 	result := report.Runs[0].Results[0]
 	if result.Properties != nil {
 		t.Errorf("expected no properties when CWE is empty, got: %+v", result.Properties)
+	}
+}
+
+// ── toRelativePath ────────────────────────────────────────────────────────────
+
+func TestToRelativePath_AlreadyRelative(t *testing.T) {
+	got := toRelativePath("/some/cwd", "server.py")
+	if got != "server.py" {
+		t.Errorf("expected 'server.py' unchanged, got %q", got)
+	}
+}
+
+func TestToRelativePath_AbsoluteUnderCwd(t *testing.T) {
+	cwd := "/repo/root"
+	abs := "/repo/root/examples/tool-poisoning/server.py"
+	got := toRelativePath(cwd, abs)
+	want := filepath.Join("examples", "tool-poisoning", "server.py")
+	if got != want {
+		t.Errorf("toRelativePath(%q, %q) = %q, want %q", cwd, abs, got, want)
+	}
+}
+
+func TestToRelativePath_EmptyCwdFallback(t *testing.T) {
+	// When cwd is empty filepath.Rel still succeeds for paths it can relativize,
+	// but for absolute paths vs empty base it returns the path with "../…" prefix.
+	// The important thing is that no panic occurs and a non-empty string is returned.
+	abs := "/some/absolute/path.py"
+	got := toRelativePath("", abs)
+	if got == "" {
+		t.Errorf("expected non-empty result for absolute path with empty cwd")
+	}
+}
+
+func TestToRelativePath_RelativeInput_NotChanged(t *testing.T) {
+	got := toRelativePath("/any/cwd", "relative/path/file.py")
+	if got != "relative/path/file.py" {
+		t.Errorf("expected relative path unchanged, got %q", got)
+	}
+}
+
+// ── SARIF absolute path → relative path ──────────────────────────────────────
+
+func TestReport_SARIF_AbsolutePathMadeRelative(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd() error: %v", err)
+	}
+
+	// Construct an absolute path rooted at the test's cwd.
+	absFile := filepath.Join(cwd, "examples", "vulnerable-servers", "server.py")
+
+	r := newReporter(t)
+	findings := []Finding{
+		{Rule: "mcp-cmd-injection", Severity: SeverityCritical, Message: "cmd injection", File: absFile, Line: 10},
+	}
+	out, err := r.Report(findings, FormatSARIF)
+	if err != nil {
+		t.Fatalf("Report() SARIF error: %v", err)
+	}
+	report := parseSARIF(t, out)
+
+	if len(report.Runs[0].Results) == 0 {
+		t.Fatal("expected at least one result")
+	}
+	locs := report.Runs[0].Results[0].Locations
+	if len(locs) == 0 {
+		t.Fatal("expected location in result")
+	}
+	uri := locs[0].PhysicalLocation.ArtifactLocation.URI
+
+	// The URI must not be absolute.
+	if filepath.IsAbs(uri) {
+		t.Errorf("SARIF URI should be relative, got absolute path: %q", uri)
+	}
+	// It must equal the relative form of the original absolute path.
+	want := filepath.Join("examples", "vulnerable-servers", "server.py")
+	if uri != want {
+		t.Errorf("expected URI %q, got %q", want, uri)
+	}
+}
+
+func TestReport_SARIF_RelativePathUnchanged(t *testing.T) {
+	r := newReporter(t)
+	findings := []Finding{
+		{Rule: "mcp-test", Severity: SeverityHigh, Message: "msg", File: "examples/server.py", Line: 1},
+	}
+	out, err := r.Report(findings, FormatSARIF)
+	if err != nil {
+		t.Fatalf("Report() SARIF error: %v", err)
+	}
+	report := parseSARIF(t, out)
+
+	uri := report.Runs[0].Results[0].Locations[0].PhysicalLocation.ArtifactLocation.URI
+	if uri != "examples/server.py" {
+		t.Errorf("expected relative path unchanged, got %q", uri)
 	}
 }
