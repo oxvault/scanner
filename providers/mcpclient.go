@@ -90,24 +90,24 @@ func (c *mcpClient) Connect(cmd string, args []string) (*MCPSession, error) {
 	}
 
 	if err := encoder.Encode(initReq); err != nil {
-		proc.Process.Kill()
+		_ = proc.Process.Kill()
 		return nil, fmt.Errorf("send initialize: %w", err)
 	}
 
 	// Read initialize response
 	if !scanner.Scan() {
-		proc.Process.Kill()
+		_ = proc.Process.Kill()
 		return nil, fmt.Errorf("no response from server")
 	}
 
 	var initResp jsonRPCResponse
 	if err := json.Unmarshal(scanner.Bytes(), &initResp); err != nil {
-		proc.Process.Kill()
+		_ = proc.Process.Kill()
 		return nil, fmt.Errorf("parse initialize response: %w", err)
 	}
 
 	if initResp.Error != nil {
-		proc.Process.Kill()
+		_ = proc.Process.Kill()
 		return nil, fmt.Errorf("server error: %s", initResp.Error.Message)
 	}
 
@@ -190,8 +190,8 @@ func (c *mcpClient) Close(session *MCPSession) error {
 	process := session.process.(*mcpProcess)
 
 	if process.cmd.Process != nil {
-		process.cmd.Process.Kill()
-		process.cmd.Wait()
+		_ = process.cmd.Process.Kill()
+		_ = process.cmd.Wait()
 	}
 
 	c.logger.Info("disconnected from MCP server")
