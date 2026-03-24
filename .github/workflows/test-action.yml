@@ -2,7 +2,8 @@ name: Test Scan Action
 
 on:
   push:
-    branches: [feat/test-scan-action]
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
