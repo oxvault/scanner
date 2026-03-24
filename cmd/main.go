@@ -15,36 +15,9 @@ import (
 
 var version = "0.1.0"
 
-const asciiLogo = `
-             *+                                +*
-             +.*                              *.+
-             *..-%                          %=..*
-              +....+%%    %*=:.:=*#%    %%+....+
-                %=.....-*#-.-=*##*=-.-#*-.....-%
-                   %#-.....:*%        %*:...-#%
-                    #+#-....-%        %-...-**#
-                    #.:@%#-..*        #..:*%@:.#
-                    #..%@@@#-#        #-#@@@%..#
-                    %:.#@@@@@@        @@@@@@#.:%
-                    %-.+@@@@@@        @@@@@@+.-%
-                    %+..%@@@@@@      @@@@@@%:.=%
-                     %=..+%@@@@      @@@@%+..=%
-                       %:.:*@@@@    @@@@*:.:#
-                         %*..:#@@  @@#:..*%
-                           *...*%  %#:..*
-                             *:.:+*:.:*%
-                               #:..:#%
-                                 %%
-
-              %%%%  %%  %%  %  %%%  %%  %%%  %%
-              *:+*=:*@%=:*-*@%--@%=-%@%::=%@@=:@@
-              :+@@@=-@@%:.+%@@%:=+:%@%-=%:+@@=:@@
-              #.=*=:#@%-=%-=@@@#..#@%=:#*+.*@#.=+
-               %%%@@@%%@@@%@@@@%%@@@%@@@@%%@@@%%`
-
 func main() {
 	root := &cobra.Command{
-		Use:     "Oxvault",
+		Use:     "oxvault",
 		Short:   "MCP security scanner — detect vulnerabilities in AI tool integrations",
 		Version: version,
 		Run: func(cmd *cobra.Command, args []string) {
@@ -65,13 +38,12 @@ func main() {
 }
 
 func printLogo() {
-	cyan := color.New(color.FgCyan, color.Bold)
 	dim := color.New(color.Faint)
 	bold := color.New(color.Bold)
+	cyan := color.New(color.FgCyan, color.Bold)
 
-	_, _ = cyan.Fprintln(os.Stderr, asciiLogo)
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintf(os.Stderr, "  %s  %s\n",
+	fmt.Fprintf(os.Stderr, "\n  %s %s  %s\n",
+		cyan.Sprint("◉"),
 		bold.Sprint("Oxvault Scanner"),
 		dim.Sprintf("v%s", version))
 	fmt.Fprintf(os.Stderr, "  %s\n\n",
