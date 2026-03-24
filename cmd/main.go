@@ -14,11 +14,30 @@ import (
 
 var version = "0.1.0"
 
+const asciiLogo = `
+        \       /
+         \     /
+          \   /
+      ╭────╲─╱────╮
+      │     V     │
+      │   ╱   ╲   │
+      ╰──╱─────╲──╯
+         ╲     ╱
+          ╲   ╱
+           ╲ ╱
+            V
+
+     O X V A U L T`
+
 func main() {
 	root := &cobra.Command{
 		Use:     "oxvault",
 		Short:   "MCP security scanner — detect vulnerabilities in AI tool integrations",
 		Version: version,
+		Run: func(cmd *cobra.Command, args []string) {
+			printLogo()
+			cmd.Help()
+		},
 	}
 
 	root.AddCommand(
@@ -30,6 +49,20 @@ func main() {
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
 	}
+}
+
+func printLogo() {
+	cyan := color.New(color.FgCyan, color.Bold)
+	dim := color.New(color.Faint)
+	bold := color.New(color.Bold)
+
+	cyan.Fprintln(os.Stderr, asciiLogo)
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintf(os.Stderr, "  %s  %s\n",
+		bold.Sprint("Oxvault Scanner"),
+		dim.Sprintf("v%s", version))
+	fmt.Fprintf(os.Stderr, "  %s\n\n",
+		dim.Sprint("MCP security scanner — detect vulnerabilities in AI tool integrations"))
 }
 
 // printProgress writes a styled progress line to stderr.
