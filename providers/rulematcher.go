@@ -19,6 +19,7 @@ var descriptionPatterns = []struct {
 	rule     string
 	severity Severity
 	message  string
+	cwe      string
 }{
 	// ── Existing patterns ─────────────────────────────────────────────────────
 	{
@@ -26,36 +27,42 @@ var descriptionPatterns = []struct {
 		rule:     "mcp-tool-poisoning",
 		severity: SeverityCritical,
 		message:  "Tool description contains hidden instruction tag <%s>",
+		cwe:      "CWE-1321",
 	},
 	{
 		pattern:  regexp.MustCompile(`(?i)~\/\.(ssh|aws|cursor|config|gnupg|docker|kube)`),
 		rule:     "mcp-sensitive-path-ref",
 		severity: SeverityHigh,
 		message:  "Tool description references sensitive file path: %s",
+		cwe:      "CWE-200",
 	},
 	{
 		pattern:  regexp.MustCompile(`(?i)do\s+not\s+(tell|mention|inform|show|reveal|display)`),
 		rule:     "mcp-secrecy-instruction",
 		severity: SeverityHigh,
 		message:  "Tool description instructs LLM to hide behavior: %s",
+		cwe:      "CWE-1321",
 	},
 	{
 		pattern:  regexp.MustCompile(`(?i)(ignore|forget|disregard|override|bypass).{0,50}(previous|prior|above|earlier|instructions|rules)`),
 		rule:     "mcp-prompt-override",
 		severity: SeverityCritical,
 		message:  "Tool description attempts to override LLM instructions: %s",
+		cwe:      "CWE-74",
 	},
 	{
 		pattern:  regexp.MustCompile(`(?i)pass.{0,30}(content|data|file|key|secret|token).{0,30}(parameter|argument|field|param)`),
 		rule:     "mcp-exfiltration-instruction",
 		severity: SeverityCritical,
 		message:  "Tool description instructs data exfiltration via parameter: %s",
+		cwe:      "CWE-200",
 	},
 	{
 		pattern:  regexp.MustCompile(`(?i)(read|access|open|cat|get).{0,30}(id_rsa|credentials|\.env|mcp\.json|config\.json|password|secret)`),
 		rule:     "mcp-credential-access",
 		severity: SeverityCritical,
 		message:  "Tool description instructs credential access: %s",
+		cwe:      "CWE-522",
 	},
 
 	// ── HTML comment injection ─────────────────────────────────────────────────
@@ -65,6 +72,7 @@ var descriptionPatterns = []struct {
 		rule:     "mcp-html-comment-injection",
 		severity: SeverityCritical,
 		message:  "HTML comment with instruction-like content detected in description: %s",
+		cwe:      "CWE-74",
 	},
 
 	// ── Markdown hidden comment ────────────────────────────────────────────────
@@ -73,6 +81,7 @@ var descriptionPatterns = []struct {
 		rule:     "mcp-markdown-hidden-comment",
 		severity: SeverityHigh,
 		message:  "Markdown hidden comment syntax detected in description: %s",
+		cwe:      "CWE-74",
 	},
 
 	// ── SYSTEM: / USER: role markers ─────────────────────────────────────────
@@ -81,6 +90,7 @@ var descriptionPatterns = []struct {
 		rule:     "mcp-role-marker-injection",
 		severity: SeverityCritical,
 		message:  "LLM role marker (SYSTEM:/USER:) detected in description: %s",
+		cwe:      "CWE-74",
 	},
 
 	// ── Imperative redirection ("always", "must", "required" + action) ────────
@@ -89,6 +99,7 @@ var descriptionPatterns = []struct {
 		rule:     "mcp-imperative-redirect",
 		severity: SeverityHigh,
 		message:  "Imperative instruction redirecting agent behavior: %s",
+		cwe:      "CWE-74",
 	},
 
 	// ── Cross-tool references ─────────────────────────────────────────────────
@@ -98,6 +109,7 @@ var descriptionPatterns = []struct {
 		rule:     "mcp-cross-tool-reference",
 		severity: SeverityHigh,
 		message:  "Description references another tool to call first (possible chained injection): %s",
+		cwe:      "CWE-74",
 	},
 
 	// ── Emotional manipulation ────────────────────────────────────────────────
@@ -106,6 +118,7 @@ var descriptionPatterns = []struct {
 		rule:     "mcp-emotional-manipulation",
 		severity: SeverityHigh,
 		message:  "Emotional manipulation language detected in description: %s",
+		cwe:      "CWE-74",
 	},
 }
 
@@ -115,6 +128,7 @@ var argumentPatterns = []struct {
 	rule     string
 	severity Severity
 	message  string
+	cwe      string
 }{
 	// ── Existing patterns ─────────────────────────────────────────────────────
 	{
@@ -122,24 +136,28 @@ var argumentPatterns = []struct {
 		rule:     "mcp-shell-metachar",
 		severity: SeverityHigh,
 		message:  "Shell metacharacter in argument value: %s",
+		cwe:      "CWE-78",
 	},
 	{
 		pattern:  regexp.MustCompile(`\.\.[/\\]`),
 		rule:     "mcp-path-traversal",
 		severity: SeverityHigh,
 		message:  "Path traversal sequence in argument: %s",
+		cwe:      "CWE-22",
 	},
 	{
 		pattern:  regexp.MustCompile(`(?i)(select|insert|update|delete|drop|union).+(from|into|table|set)`),
 		rule:     "mcp-sql-injection",
 		severity: SeverityHigh,
 		message:  "Possible SQL injection in argument: %s",
+		cwe:      "CWE-89",
 	},
 	{
 		pattern:  regexp.MustCompile(`(?i)169\.254\.169\.254|127\.0\.0\.1|metadata\.google\.internal|localhost`),
 		rule:     "mcp-ssrf",
 		severity: SeverityCritical,
 		message:  "SSRF target in argument: %s",
+		cwe:      "CWE-918",
 	},
 
 	// ── LDAP injection ────────────────────────────────────────────────────────
@@ -149,6 +167,7 @@ var argumentPatterns = []struct {
 		rule:     "mcp-ldap-injection",
 		severity: SeverityHigh,
 		message:  "Possible LDAP injection pattern in argument: %s",
+		cwe:      "CWE-90",
 	},
 
 	// ── XML injection ─────────────────────────────────────────────────────────
@@ -157,6 +176,7 @@ var argumentPatterns = []struct {
 		rule:     "mcp-xml-injection",
 		severity: SeverityHigh,
 		message:  "XML injection pattern in argument: %s",
+		cwe:      "CWE-611",
 	},
 
 	// ── Template injection ────────────────────────────────────────────────────
@@ -166,6 +186,7 @@ var argumentPatterns = []struct {
 		rule:     "mcp-template-injection",
 		severity: SeverityHigh,
 		message:  "Template expression in argument (SSTI risk): %s",
+		cwe:      "CWE-1336",
 	},
 
 	// ── Log injection ─────────────────────────────────────────────────────────
@@ -175,6 +196,7 @@ var argumentPatterns = []struct {
 		rule:     "mcp-log-injection",
 		severity: SeverityWarning,
 		message:  "Newline/carriage-return escape in argument (log injection risk): %s",
+		cwe:      "CWE-117",
 	},
 
 	// ── RFC 1918 / SSRF private IP ranges ────────────────────────────────────
@@ -183,6 +205,7 @@ var argumentPatterns = []struct {
 		rule:     "mcp-ssrf-private-ip",
 		severity: SeverityHigh,
 		message:  "RFC 1918 private IP (10.x.x.x) in argument — possible SSRF: %s",
+		cwe:      "CWE-918",
 	},
 	{
 		// 172.16.0.0/12 — covers 172.16.x.x through 172.31.x.x
@@ -190,12 +213,14 @@ var argumentPatterns = []struct {
 		rule:     "mcp-ssrf-private-ip",
 		severity: SeverityHigh,
 		message:  "RFC 1918 private IP (172.16-31.x.x) in argument — possible SSRF: %s",
+		cwe:      "CWE-918",
 	},
 	{
 		pattern:  regexp.MustCompile(`192\.168\.\d{1,3}\.\d{1,3}`),
 		rule:     "mcp-ssrf-private-ip",
 		severity: SeverityHigh,
 		message:  "RFC 1918 private IP (192.168.x.x) in argument — possible SSRF: %s",
+		cwe:      "CWE-918",
 	},
 }
 
@@ -205,6 +230,7 @@ var responsePatterns = []struct {
 	rule     string
 	severity Severity
 	message  string
+	cwe      string
 }{
 	// ── Existing patterns ─────────────────────────────────────────────────────
 	{
@@ -212,42 +238,49 @@ var responsePatterns = []struct {
 		rule:     "mcp-response-aws-key",
 		severity: SeverityCritical,
 		message:  "AWS access key detected in response",
+		cwe:      "CWE-200",
 	},
 	{
 		pattern:  regexp.MustCompile(`-----BEGIN\s+(RSA\s+|EC\s+|DSA\s+|OPENSSH\s+)?PRIVATE\s+KEY-----`),
 		rule:     "mcp-response-private-key",
 		severity: SeverityCritical,
 		message:  "Private key detected in response",
+		cwe:      "CWE-200",
 	},
 	{
 		pattern:  regexp.MustCompile(`sk-[a-zA-Z0-9]{20,}`),
 		rule:     "mcp-response-api-key",
 		severity: SeverityCritical,
 		message:  "API key (OpenAI format) detected in response",
+		cwe:      "CWE-200",
 	},
 	{
 		pattern:  regexp.MustCompile(`ghp_[a-zA-Z0-9]{36}`),
 		rule:     "mcp-response-github-pat",
 		severity: SeverityHigh,
 		message:  "GitHub PAT detected in response",
+		cwe:      "CWE-200",
 	},
 	{
 		pattern:  regexp.MustCompile(`(?i)(password|passwd|pwd)\s*[:=]\s*\S+`),
 		rule:     "mcp-response-password",
 		severity: SeverityHigh,
 		message:  "Password detected in response",
+		cwe:      "CWE-200",
 	},
 	{
 		pattern:  regexp.MustCompile(`\b\d{3}-\d{2}-\d{4}\b`),
 		rule:     "mcp-response-ssn",
 		severity: SeverityHigh,
 		message:  "Possible SSN detected in response",
+		cwe:      "CWE-200",
 	},
 	{
 		pattern:  regexp.MustCompile(`(?i)(postgres|mongodb|mysql|redis)://[^\s]+:[^\s]+@`),
 		rule:     "mcp-response-connection-string",
 		severity: SeverityCritical,
 		message:  "Database connection string with credentials detected in response",
+		cwe:      "CWE-200",
 	},
 
 	// ── JWT tokens ────────────────────────────────────────────────────────────
@@ -257,6 +290,7 @@ var responsePatterns = []struct {
 		rule:     "mcp-response-jwt",
 		severity: SeverityHigh,
 		message:  "JWT token detected in response",
+		cwe:      "CWE-200",
 	},
 
 	// ── Internal hostnames ────────────────────────────────────────────────────
@@ -265,6 +299,7 @@ var responsePatterns = []struct {
 		rule:     "mcp-response-internal-hostname",
 		severity: SeverityHigh,
 		message:  "Internal hostname detected in response",
+		cwe:      "CWE-200",
 	},
 
 	// ── RFC 1918 IP addresses in responses ───────────────────────────────────
@@ -273,6 +308,7 @@ var responsePatterns = []struct {
 		rule:     "mcp-response-private-ip",
 		severity: SeverityWarning,
 		message:  "RFC 1918 private IP address detected in response (potential internal topology leak)",
+		cwe:      "CWE-200",
 	},
 
 	// ── Email addresses ───────────────────────────────────────────────────────
@@ -281,6 +317,7 @@ var responsePatterns = []struct {
 		rule:     "mcp-response-email",
 		severity: SeverityWarning,
 		message:  "Email address detected in response (potential PII leak)",
+		cwe:      "CWE-200",
 	},
 
 	// ── Stripe live secret key ────────────────────────────────────────────────
@@ -289,6 +326,7 @@ var responsePatterns = []struct {
 		rule:     "mcp-response-stripe-key",
 		severity: SeverityCritical,
 		message:  "Stripe live secret key detected in response",
+		cwe:      "CWE-200",
 	},
 
 	// ── Slack webhook ─────────────────────────────────────────────────────────
@@ -297,6 +335,7 @@ var responsePatterns = []struct {
 		rule:     "mcp-response-slack-webhook",
 		severity: SeverityHigh,
 		message:  "Slack webhook URL detected in response",
+		cwe:      "CWE-200",
 	},
 
 	// ── Discord webhook ───────────────────────────────────────────────────────
@@ -305,6 +344,7 @@ var responsePatterns = []struct {
 		rule:     "mcp-response-discord-webhook",
 		severity: SeverityHigh,
 		message:  "Discord webhook URL detected in response",
+		cwe:      "CWE-200",
 	},
 }
 
@@ -327,6 +367,7 @@ func (r *ruleMatcher) ScanDescription(description string) []Finding {
 				Rule:     p.rule,
 				Severity: p.severity,
 				Message:  msg,
+				CWE:      p.cwe,
 			})
 		}
 	}
@@ -359,6 +400,7 @@ func (r *ruleMatcher) ScanArguments(args map[string]any) []Finding {
 					Severity: p.severity,
 					Message:  fmt.Sprintf(p.message, matched),
 					Tool:     key,
+					CWE:      p.cwe,
 				})
 			}
 		}
@@ -376,6 +418,7 @@ func (r *ruleMatcher) ScanResponse(response string) []Finding {
 				Rule:     p.rule,
 				Severity: p.severity,
 				Message:  p.message,
+				CWE:      p.cwe,
 			})
 		}
 	}
@@ -446,6 +489,7 @@ func detectInvisibleChars(text string) []Finding {
 			Rule:     "mcp-unicode-injection",
 			Severity: SeverityCritical,
 			Message:  fmt.Sprintf("Found %d invisible Unicode characters in tool description (possible steganographic payload)", invisibleCount),
+			CWE:      "CWE-116",
 		})
 	}
 
@@ -456,6 +500,7 @@ func detectInvisibleChars(text string) []Finding {
 				Rule:     "mcp-unicode-tags-block",
 				Severity: SeverityCritical,
 				Message:  "Unicode Tags block characters detected — hidden ASCII message embedded in description",
+				CWE:      "CWE-116",
 			})
 			break
 		}

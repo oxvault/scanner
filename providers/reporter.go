@@ -201,10 +201,14 @@ func (r *reporter) reportTerminal(findings []Finding) ([]byte, error) {
 
 // writeFinding writes a single colored finding block to the builder.
 func writeFinding(b *strings.Builder, f Finding) {
-	// Icon + severity badge + rule name
+	// Icon + severity badge + rule name (+ CWE when available)
 	icon := severityIcon(f.Severity)
 	badge := severityLabel(f.Severity)
-	rule := colorBold.Sprint(f.Rule)
+	ruleName := f.Rule
+	if f.CWE != "" {
+		ruleName = f.Rule + " (" + f.CWE + ")"
+	}
+	rule := colorBold.Sprint(ruleName)
 	fmt.Fprintf(b, "  %s %s %s\n", icon, badge, rule)
 
 	// File location
@@ -251,11 +255,15 @@ func (r *reporter) reportSARIF(findings []Finding) ([]byte, error) {
 			} `json:"region,omitempty"`
 		} `json:"physicalLocation,omitempty"`
 	}
+	type sarifProperties struct {
+		CWE string `json:"cwe,omitempty"`
+	}
 	type sarifResult struct {
-		RuleID    string          `json:"ruleId"`
-		Level     string          `json:"level"`
-		Message   sarifMessage    `json:"message"`
-		Locations []sarifLocation `json:"locations,omitempty"`
+		RuleID      string          `json:"ruleId"`
+		Level       string          `json:"level"`
+		Message     sarifMessage    `json:"message"`
+		Locations   []sarifLocation `json:"locations,omitempty"`
+		Properties  *sarifProperties `json:"properties,omitempty"`
 	}
 	type sarifRun struct {
 		Tool struct {
@@ -278,6 +286,9 @@ func (r *reporter) reportSARIF(findings []Finding) ([]byte, error) {
 			RuleID:  f.Rule,
 			Level:   severityToSARIF(f.Severity),
 			Message: sarifMessage{Text: f.Message},
+		}
+		if f.CWE != "" {
+			result.Properties = &sarifProperties{CWE: f.CWE}
 		}
 		if f.File != "" {
 			loc := sarifLocation{}

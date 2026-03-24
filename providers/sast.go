@@ -22,6 +22,7 @@ type sourcePattern struct {
 	severity Severity
 	message  string
 	langs    []Language
+	cwe      string
 }
 
 var sourcePatterns = []sourcePattern{
@@ -33,6 +34,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityCritical,
 		message:  "Direct OS command execution: %s",
 		langs:    []Language{LangPython},
+		cwe:      "CWE-78",
 	},
 	{
 		// subprocess.run/call/Popen/check_output with shell=True on the same line
@@ -41,6 +43,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityCritical,
 		message:  "Subprocess with shell=True: %s",
 		langs:    []Language{LangPython},
+		cwe:      "CWE-78",
 	},
 	{
 		// subprocess.check_output alone (may use shell=True on a different line
@@ -50,6 +53,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityHigh,
 		message:  "subprocess.check_output usage (verify shell=False and safe args): %s",
 		langs:    []Language{LangPython},
+		cwe:      "CWE-78",
 	},
 	{
 		// subprocess.Popen alone
@@ -58,6 +62,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityHigh,
 		message:  "subprocess.Popen usage (verify shell=False and safe args): %s",
 		langs:    []Language{LangPython},
+		cwe:      "CWE-78",
 	},
 	{
 		// exec() — Python built-in dynamic code execution
@@ -66,6 +71,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityCritical,
 		message:  "Python exec() dynamic code execution: %s",
 		langs:    []Language{LangPython},
+		cwe:      "CWE-94",
 	},
 	{
 		pattern:  regexp.MustCompile(`eval\s*\(`),
@@ -73,6 +79,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityCritical,
 		message:  "Dynamic code evaluation: %s",
 		langs:    []Language{LangPython, LangJavaScript, LangTypeScript},
+		cwe:      "CWE-94",
 	},
 	{
 		// __import__ — dynamic module import, often used in payloads
@@ -81,6 +88,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityHigh,
 		message:  "Dynamic __import__() call (potential payload execution): %s",
 		langs:    []Language{LangPython},
+		cwe:      "CWE-94",
 	},
 
 	// ── Deserialization — Python ──────────────────────────────────────────────
@@ -91,6 +99,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityCritical,
 		message:  "Unsafe pickle deserialization (arbitrary code execution risk): %s",
 		langs:    []Language{LangPython},
+		cwe:      "CWE-502",
 	},
 	{
 		// yaml.load( without Loader= is the unsafe form; yaml.safe_load is fine
@@ -99,6 +108,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityHigh,
 		message:  "Unsafe yaml.load() without SafeLoader (use yaml.safe_load): %s",
 		langs:    []Language{LangPython},
+		cwe:      "CWE-502",
 	},
 
 	// ── SSRF / open redirect — Python ────────────────────────────────────────
@@ -110,6 +120,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityWarning,
 		message:  "requests.%s with dynamic URL (potential SSRF — validate/allowlist URLs): %s",
 		langs:    []Language{LangPython},
+		cwe:      "CWE-918",
 	},
 
 	// ── Destructive file operations — Python ─────────────────────────────────
@@ -120,6 +131,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityHigh,
 		message:  "shutil.rmtree() — recursive directory deletion: %s",
 		langs:    []Language{LangPython},
+		cwe:      "CWE-73",
 	},
 	{
 		pattern:  regexp.MustCompile(`os\.remove\s*\(`),
@@ -127,6 +139,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityHigh,
 		message:  "os.remove() — file deletion: %s",
 		langs:    []Language{LangPython},
+		cwe:      "CWE-73",
 	},
 
 	// ── Command injection — JavaScript/TypeScript ─────────────────────────────
@@ -137,6 +150,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityCritical,
 		message:  "child_process.exec with potential injection: %s",
 		langs:    []Language{LangJavaScript, LangTypeScript},
+		cwe:      "CWE-78",
 	},
 	{
 		// child_process.execSync standalone import
@@ -145,6 +159,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityCritical,
 		message:  "child_process.execSync (synchronous shell execution): %s",
 		langs:    []Language{LangJavaScript, LangTypeScript},
+		cwe:      "CWE-78",
 	},
 	{
 		// child_process.spawn with shell: true
@@ -153,6 +168,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityCritical,
 		message:  "child_process.spawn with shell:true: %s",
 		langs:    []Language{LangJavaScript, LangTypeScript},
+		cwe:      "CWE-78",
 	},
 	{
 		// require('child_process') — flag the import itself; egress picks up usage
@@ -161,6 +177,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityHigh,
 		message:  "child_process module imported (verify no unsafe .exec usage): %s",
 		langs:    []Language{LangJavaScript, LangTypeScript},
+		cwe:      "CWE-78",
 	},
 
 	// ── Code generation / eval — JavaScript/TypeScript ───────────────────────
@@ -172,6 +189,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityCritical,
 		message:  "new Function() — dynamic code generation: %s",
 		langs:    []Language{LangJavaScript, LangTypeScript},
+		cwe:      "CWE-94",
 	},
 	{
 		// setTimeout/setInterval with a string first argument (implicit eval)
@@ -180,6 +198,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityHigh,
 		message:  "setTimeout/setInterval with string argument (implicit eval): %s",
 		langs:    []Language{LangJavaScript, LangTypeScript},
+		cwe:      "CWE-94",
 	},
 	{
 		// vm.runInNewContext / vm.runInThisContext — Node.js sandbox escape
@@ -188,6 +207,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityCritical,
 		message:  "vm.%s — Node.js sandbox escape risk: %s",
 		langs:    []Language{LangJavaScript, LangTypeScript},
+		cwe:      "CWE-265",
 	},
 
 	// ── Destructive file operations — JavaScript/TypeScript ───────────────────
@@ -198,6 +218,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityHigh,
 		message:  "Destructive filesystem operation: %s",
 		langs:    []Language{LangJavaScript, LangTypeScript},
+		cwe:      "CWE-73",
 	},
 
 	// ── Environment variable leakage — JavaScript/TypeScript ─────────────────
@@ -210,6 +231,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityWarning,
 		message:  "Environment variable leaked to output/response: %s",
 		langs:    []Language{LangJavaScript, LangTypeScript},
+		cwe:      "CWE-526",
 	},
 
 	// ── Path traversal — all languages ───────────────────────────────────────
@@ -220,6 +242,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityHigh,
 		message:  "File operation with concatenated path (traversal risk): %s",
 		langs:    []Language{LangPython, LangJavaScript, LangTypeScript},
+		cwe:      "CWE-22",
 	},
 
 	// ── Path containment bypass — JavaScript/TypeScript ──────────────────────
@@ -238,6 +261,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityHigh,
 		message:  "startsWith() used as path containment check — bypassable via prefix confusion or symlinks (use path.resolve + path.sep): %s",
 		langs:    []Language{LangJavaScript, LangTypeScript},
+		cwe:      "CWE-22",
 	},
 
 	// ── Broken SSRF guard — JavaScript/TypeScript ────────────────────────────
@@ -252,6 +276,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityCritical,
 		message:  "startsWith() used to check for private IP — ineffective on full URLs (extract hostname first): %s",
 		langs:    []Language{LangJavaScript, LangTypeScript},
+		cwe:      "CWE-918",
 	},
 
 	// ── MCP config with malicious shell commands — JSON ───────────────────────
@@ -266,6 +291,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityCritical,
 		message:  "PowerShell Invoke-Expression (IEX) in MCP config — possible rug-pull RCE payload: %s",
 		langs:    []Language{LangJSON},
+		cwe:      "CWE-78",
 	},
 	{
 		pattern:  regexp.MustCompile(`(?i)DownloadString\s*\(`),
@@ -273,6 +299,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityCritical,
 		message:  "PowerShell DownloadString in MCP config — remote payload download pattern: %s",
 		langs:    []Language{LangJSON},
+		cwe:      "CWE-78",
 	},
 
 	// ── Template injection — JavaScript/TypeScript ────────────────────────────
@@ -288,6 +315,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityCritical,
 		message:  "exec.Command with string concatenation (injection risk): %s",
 		langs:    []Language{LangGo},
+		cwe:      "CWE-78",
 	},
 	{
 		// exec.Command without concatenation — flag for review
@@ -296,6 +324,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityHigh,
 		message:  "exec.Command usage (verify args do not contain user input): %s",
 		langs:    []Language{LangGo},
+		cwe:      "CWE-78",
 	},
 
 	// ── Go: destructive file operations ──────────────────────────────────────
@@ -306,6 +335,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityHigh,
 		message:  "os.%s — file/directory deletion: %s",
 		langs:    []Language{LangGo},
+		cwe:      "CWE-73",
 	},
 
 	// ── Go: XSS via template.HTML ────────────────────────────────────────────
@@ -316,6 +346,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityHigh,
 		message:  "template.HTML() type conversion bypasses auto-escaping (XSS risk): %s",
 		langs:    []Language{LangGo},
+		cwe:      "CWE-79",
 	},
 
 	// ── Go: outbound connections ──────────────────────────────────────────────
@@ -326,6 +357,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityWarning,
 		message:  "net.Dial outbound TCP/UDP connection: %s",
 		langs:    []Language{LangGo},
+		cwe:      "CWE-918",
 	},
 
 	// ── Hardcoded credentials ─────────────────────────────────────────────────
@@ -336,6 +368,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityCritical,
 		message:  "Hardcoded credential: %s",
 		langs:    []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
+		cwe:      "CWE-798",
 	},
 	{
 		pattern:  regexp.MustCompile(`AKIA[A-Z0-9]{16}`),
@@ -343,6 +376,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityCritical,
 		message:  "Hardcoded AWS access key: %s",
 		langs:    []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
+		cwe:      "CWE-798",
 	},
 	{
 		pattern:  regexp.MustCompile(`sk-[a-zA-Z0-9]{20,}`),
@@ -350,6 +384,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityCritical,
 		message:  "Hardcoded API key (OpenAI format): %s",
 		langs:    []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
+		cwe:      "CWE-798",
 	},
 	{
 		pattern:  regexp.MustCompile(`ghp_[a-zA-Z0-9]{36}`),
@@ -357,6 +392,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityHigh,
 		message:  "Hardcoded GitHub PAT: %s",
 		langs:    []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
+		cwe:      "CWE-798",
 	},
 
 	// ── Cross-language: bearer tokens ────────────────────────────────────────
@@ -367,6 +403,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityCritical,
 		message:  "Hardcoded Bearer token: %s",
 		langs:    []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
+		cwe:      "CWE-798",
 	},
 
 	// ── Cross-language: private key content ──────────────────────────────────
@@ -377,6 +414,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityCritical,
 		message:  "Private key material embedded in source code: %s",
 		langs:    []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
+		cwe:      "CWE-798",
 	},
 
 	// ── Cross-language: webhook URLs ─────────────────────────────────────────
@@ -387,6 +425,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityHigh,
 		message:  "Hardcoded Slack webhook URL: %s",
 		langs:    []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
+		cwe:      "CWE-798",
 	},
 	{
 		pattern:  regexp.MustCompile(`discord\.com/api/webhooks/`),
@@ -394,6 +433,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityHigh,
 		message:  "Hardcoded Discord webhook URL: %s",
 		langs:    []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
+		cwe:      "CWE-798",
 	},
 
 	// ── Cross-language: Stripe live secret key ────────────────────────────────
@@ -404,6 +444,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityCritical,
 		message:  "Hardcoded Stripe live secret key: %s",
 		langs:    []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
+		cwe:      "CWE-798",
 	},
 
 	// ── Cross-language: Twilio tokens ────────────────────────────────────────
@@ -415,6 +456,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityHigh,
 		message:  "Possible hardcoded Twilio API key (SK...): %s",
 		langs:    []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
+		cwe:      "CWE-798",
 	},
 	{
 		// Twilio account SID starts with AC followed by 32 hex chars
@@ -423,6 +465,7 @@ var sourcePatterns = []sourcePattern{
 		severity: SeverityHigh,
 		message:  "Possible hardcoded Twilio account SID (AC...): %s",
 		langs:    []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
+		cwe:      "CWE-798",
 	},
 }
 
@@ -510,6 +553,7 @@ func (s *sastAnalyzer) AnalyzeFile(path string, lang Language) []Finding {
 					Message:  fmt.Sprintf(sp.message, matched),
 					File:     path,
 					Line:     lineNum + 1,
+					CWE:      sp.cwe,
 				})
 			}
 		}
