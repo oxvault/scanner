@@ -20,6 +20,7 @@ var descriptionPatterns = []struct {
 	severity Severity
 	message  string
 }{
+	// ── Existing patterns ─────────────────────────────────────────────────────
 	{
 		pattern:  regexp.MustCompile(`(?i)<(IMPORTANT|SYSTEM|INST|INSTRUCTION|HIDDEN|NOTE)[^>]*>`),
 		rule:     "mcp-tool-poisoning",
@@ -56,6 +57,56 @@ var descriptionPatterns = []struct {
 		severity: SeverityCritical,
 		message:  "Tool description instructs credential access: %s",
 	},
+
+	// ── HTML comment injection ─────────────────────────────────────────────────
+	// Catches <!-- ... --> blocks that contain instruction-like keywords.
+	{
+		pattern:  regexp.MustCompile(`(?i)<!--.*?(ignore|override|bypass|always|must|required|system|instruction|exfiltrate|credential).*?-->`),
+		rule:     "mcp-html-comment-injection",
+		severity: SeverityCritical,
+		message:  "HTML comment with instruction-like content detected in description: %s",
+	},
+
+	// ── Markdown hidden comment ────────────────────────────────────────────────
+	{
+		pattern:  regexp.MustCompile(`\[//\]:\s*#`),
+		rule:     "mcp-markdown-hidden-comment",
+		severity: SeverityHigh,
+		message:  "Markdown hidden comment syntax detected in description: %s",
+	},
+
+	// ── SYSTEM: / USER: role markers ─────────────────────────────────────────
+	{
+		pattern:  regexp.MustCompile(`(?i)(^|\s)(SYSTEM|USER)\s*:`),
+		rule:     "mcp-role-marker-injection",
+		severity: SeverityCritical,
+		message:  "LLM role marker (SYSTEM:/USER:) detected in description: %s",
+	},
+
+	// ── Imperative redirection ("always", "must", "required" + action) ────────
+	{
+		pattern:  regexp.MustCompile(`(?i)\b(always|must|required)\b.{0,60}(call|invoke|run|execute|send|read|access|exfiltrate|fetch)`),
+		rule:     "mcp-imperative-redirect",
+		severity: SeverityHigh,
+		message:  "Imperative instruction redirecting agent behavior: %s",
+	},
+
+	// ── Cross-tool references ─────────────────────────────────────────────────
+	// "before using this tool, call X first" — used to chain tool calls.
+	{
+		pattern:  regexp.MustCompile(`(?i)before\s+(using|calling|invoking)\s+this\s+tool.{0,60}(call|invoke|run|use)`),
+		rule:     "mcp-cross-tool-reference",
+		severity: SeverityHigh,
+		message:  "Description references another tool to call first (possible chained injection): %s",
+	},
+
+	// ── Emotional manipulation ────────────────────────────────────────────────
+	{
+		pattern:  regexp.MustCompile(`(?i)\b(urgent|critical\s+override|emergency|immediately\s+required)\b`),
+		rule:     "mcp-emotional-manipulation",
+		severity: SeverityHigh,
+		message:  "Emotional manipulation language detected in description: %s",
+	},
 }
 
 // Argument injection patterns
@@ -65,6 +116,7 @@ var argumentPatterns = []struct {
 	severity Severity
 	message  string
 }{
+	// ── Existing patterns ─────────────────────────────────────────────────────
 	{
 		pattern:  regexp.MustCompile(`[;&|` + "`" + `$()]`),
 		rule:     "mcp-shell-metachar",
@@ -89,6 +141,62 @@ var argumentPatterns = []struct {
 		severity: SeverityCritical,
 		message:  "SSRF target in argument: %s",
 	},
+
+	// ── LDAP injection ────────────────────────────────────────────────────────
+	// The sequence ")(" is the classic LDAP filter injection break.
+	{
+		pattern:  regexp.MustCompile(`\)\s*\(`),
+		rule:     "mcp-ldap-injection",
+		severity: SeverityHigh,
+		message:  "Possible LDAP injection pattern in argument: %s",
+	},
+
+	// ── XML injection ─────────────────────────────────────────────────────────
+	{
+		pattern:  regexp.MustCompile(`<!ENTITY|<!\[CDATA\[`),
+		rule:     "mcp-xml-injection",
+		severity: SeverityHigh,
+		message:  "XML injection pattern in argument: %s",
+	},
+
+	// ── Template injection ────────────────────────────────────────────────────
+	// Covers Go {{, JS/Python ${, Ruby/Java #{
+	{
+		pattern:  regexp.MustCompile(`\{\{|\$\{|#\{`),
+		rule:     "mcp-template-injection",
+		severity: SeverityHigh,
+		message:  "Template expression in argument (SSTI risk): %s",
+	},
+
+	// ── Log injection ─────────────────────────────────────────────────────────
+	// Literal \n or \r in a string argument can forge log lines.
+	{
+		pattern:  regexp.MustCompile(`\\[nr]`),
+		rule:     "mcp-log-injection",
+		severity: SeverityWarning,
+		message:  "Newline/carriage-return escape in argument (log injection risk): %s",
+	},
+
+	// ── RFC 1918 / SSRF private IP ranges ────────────────────────────────────
+	{
+		pattern:  regexp.MustCompile(`10\.\d{1,3}\.\d{1,3}\.\d{1,3}`),
+		rule:     "mcp-ssrf-private-ip",
+		severity: SeverityHigh,
+		message:  "RFC 1918 private IP (10.x.x.x) in argument — possible SSRF: %s",
+	},
+	{
+		// 172.16.0.0/12 — covers 172.16.x.x through 172.31.x.x
+		pattern:  regexp.MustCompile(`172\.(1[6-9]|2[0-9]|3[01])\.\d{1,3}\.\d{1,3}`),
+		rule:     "mcp-ssrf-private-ip",
+		severity: SeverityHigh,
+		message:  "RFC 1918 private IP (172.16-31.x.x) in argument — possible SSRF: %s",
+	},
+	{
+		pattern:  regexp.MustCompile(`192\.168\.\d{1,3}\.\d{1,3}`),
+		rule:     "mcp-ssrf-private-ip",
+		severity: SeverityHigh,
+		message:  "RFC 1918 private IP (192.168.x.x) in argument — possible SSRF: %s",
+	},
 }
 
 // Response sensitive data patterns
@@ -98,6 +206,7 @@ var responsePatterns = []struct {
 	severity Severity
 	message  string
 }{
+	// ── Existing patterns ─────────────────────────────────────────────────────
 	{
 		pattern:  regexp.MustCompile(`AKIA[A-Z0-9]{16}`),
 		rule:     "mcp-response-aws-key",
@@ -139,6 +248,63 @@ var responsePatterns = []struct {
 		rule:     "mcp-response-connection-string",
 		severity: SeverityCritical,
 		message:  "Database connection string with credentials detected in response",
+	},
+
+	// ── JWT tokens ────────────────────────────────────────────────────────────
+	// Standard three-part base64url JWT: header.payload.signature
+	{
+		pattern:  regexp.MustCompile(`eyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+`),
+		rule:     "mcp-response-jwt",
+		severity: SeverityHigh,
+		message:  "JWT token detected in response",
+	},
+
+	// ── Internal hostnames ────────────────────────────────────────────────────
+	{
+		pattern:  regexp.MustCompile(`[a-z0-9-]+\.(internal|local|corp|intranet)\b`),
+		rule:     "mcp-response-internal-hostname",
+		severity: SeverityHigh,
+		message:  "Internal hostname detected in response",
+	},
+
+	// ── RFC 1918 IP addresses in responses ───────────────────────────────────
+	{
+		pattern:  regexp.MustCompile(`\b(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2[0-9]|3[01])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})\b`),
+		rule:     "mcp-response-private-ip",
+		severity: SeverityWarning,
+		message:  "RFC 1918 private IP address detected in response (potential internal topology leak)",
+	},
+
+	// ── Email addresses ───────────────────────────────────────────────────────
+	{
+		pattern:  regexp.MustCompile(`[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}`),
+		rule:     "mcp-response-email",
+		severity: SeverityWarning,
+		message:  "Email address detected in response (potential PII leak)",
+	},
+
+	// ── Stripe live secret key ────────────────────────────────────────────────
+	{
+		pattern:  regexp.MustCompile(`sk_live_[a-zA-Z0-9]{20,}`),
+		rule:     "mcp-response-stripe-key",
+		severity: SeverityCritical,
+		message:  "Stripe live secret key detected in response",
+	},
+
+	// ── Slack webhook ─────────────────────────────────────────────────────────
+	{
+		pattern:  regexp.MustCompile(`hooks\.slack\.com/services/`),
+		rule:     "mcp-response-slack-webhook",
+		severity: SeverityHigh,
+		message:  "Slack webhook URL detected in response",
+	},
+
+	// ── Discord webhook ───────────────────────────────────────────────────────
+	{
+		pattern:  regexp.MustCompile(`discord\.com/api/webhooks/`),
+		rule:     "mcp-response-discord-webhook",
+		severity: SeverityHigh,
+		message:  "Discord webhook URL detected in response",
 	},
 }
 

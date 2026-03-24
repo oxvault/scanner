@@ -714,3 +714,684 @@ func TestDetectEgress_EmptyDir(t *testing.T) {
 		t.Errorf("expected no egress findings for empty directory, got %d", len(findings))
 	}
 }
+
+// ── New Python patterns ───────────────────────────────────────────────────────
+
+func TestAnalyzeFile_Python_SubprocessCheckOutput(t *testing.T) {
+	dir := t.TempDir()
+	content := "output = subprocess.check_output(cmd)\n"
+	path := writeTempFile(t, dir, "run.py", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangPython)
+	requireFinding(t, findings, "mcp-cmd-injection")
+}
+
+func TestAnalyzeFile_Python_SubprocessPopenAlone(t *testing.T) {
+	dir := t.TempDir()
+	content := "proc = subprocess.Popen(args, stdout=PIPE)\n"
+	path := writeTempFile(t, dir, "run.py", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangPython)
+	requireFinding(t, findings, "mcp-cmd-injection")
+}
+
+func TestAnalyzeFile_Python_ExecBuiltin(t *testing.T) {
+	dir := t.TempDir()
+	content := "exec(user_code)\n"
+	path := writeTempFile(t, dir, "run.py", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangPython)
+	requireFinding(t, findings, "mcp-code-eval")
+}
+
+func TestAnalyzeFile_Python_DynamicImport(t *testing.T) {
+	dir := t.TempDir()
+	content := `mod = __import__(module_name)` + "\n"
+	path := writeTempFile(t, dir, "loader.py", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangPython)
+	requireFinding(t, findings, "mcp-dynamic-import")
+}
+
+func TestAnalyzeFile_Python_PickleLoads(t *testing.T) {
+	dir := t.TempDir()
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{"pickle.loads", "obj = pickle.loads(data)\n"},
+		{"pickle.load", "obj = pickle.load(fp)\n"},
+	}
+	s := newSAST(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeTempFile(t, dir, tt.name+".py", tt.content)
+			findings := s.AnalyzeFile(path, LangPython)
+			requireFinding(t, findings, "mcp-unsafe-deserialization")
+		})
+	}
+}
+
+func TestAnalyzeFile_Python_YamlLoad(t *testing.T) {
+	dir := t.TempDir()
+	content := "data = yaml.load(stream)\n"
+	path := writeTempFile(t, dir, "parse.py", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangPython)
+	requireFinding(t, findings, "mcp-unsafe-deserialization")
+}
+
+func TestAnalyzeFile_Python_ShutilRmtree(t *testing.T) {
+	dir := t.TempDir()
+	content := "shutil.rmtree(target_dir)\n"
+	path := writeTempFile(t, dir, "cleanup.py", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangPython)
+	requireFinding(t, findings, "mcp-destructive-fs")
+}
+
+func TestAnalyzeFile_Python_OsRemove(t *testing.T) {
+	dir := t.TempDir()
+	content := "os.remove(file_path)\n"
+	path := writeTempFile(t, dir, "cleanup.py", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangPython)
+	requireFinding(t, findings, "mcp-destructive-fs")
+}
+
+// ── New JavaScript/TypeScript patterns ───────────────────────────────────────
+
+func TestAnalyzeFile_JS_ChildProcessExecSync(t *testing.T) {
+	dir := t.TempDir()
+	content := "const out = child_process.execSync(cmd);\n"
+	path := writeTempFile(t, dir, "run.js", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangJavaScript)
+	requireFinding(t, findings, "mcp-cmd-injection")
+}
+
+func TestAnalyzeFile_JS_ChildProcessSpawnShellTrue(t *testing.T) {
+	dir := t.TempDir()
+	content := "child_process.spawn('ls', [], { shell: true });\n"
+	path := writeTempFile(t, dir, "run.js", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangJavaScript)
+	requireFinding(t, findings, "mcp-cmd-injection")
+}
+
+func TestAnalyzeFile_JS_RequireChildProcess(t *testing.T) {
+	dir := t.TempDir()
+	content := "const cp = require('child_process');\n"
+	path := writeTempFile(t, dir, "run.js", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangJavaScript)
+	requireFinding(t, findings, "mcp-cmd-injection")
+}
+
+func TestAnalyzeFile_JS_NewFunction(t *testing.T) {
+	dir := t.TempDir()
+	content := "const fn = new Function('x', 'return x');\n"
+	path := writeTempFile(t, dir, "dyn.js", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangJavaScript)
+	requireFinding(t, findings, "mcp-code-eval")
+}
+
+func TestAnalyzeFile_JS_SetTimeoutStringArg(t *testing.T) {
+	dir := t.TempDir()
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{"setTimeout double-quote", `setTimeout("doSomething()", 1000);` + "\n"},
+		{"setInterval single-quote", `setInterval('refresh()', 5000);` + "\n"},
+	}
+	s := newSAST(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeTempFile(t, dir, tt.name+".js", tt.content)
+			findings := s.AnalyzeFile(path, LangJavaScript)
+			requireFinding(t, findings, "mcp-code-eval")
+		})
+	}
+}
+
+func TestAnalyzeFile_JS_VmRunInNewContext(t *testing.T) {
+	dir := t.TempDir()
+	content := "vm.runInNewContext(code, sandbox);\n"
+	path := writeTempFile(t, dir, "vm.js", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangJavaScript)
+	requireFinding(t, findings, "mcp-sandbox-escape")
+}
+
+func TestAnalyzeFile_JS_VmRunInThisContext(t *testing.T) {
+	dir := t.TempDir()
+	content := "vm.runInThisContext(script);\n"
+	path := writeTempFile(t, dir, "vm.ts", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangTypeScript)
+	requireFinding(t, findings, "mcp-sandbox-escape")
+}
+
+func TestAnalyzeFile_JS_FsUnlinkSync(t *testing.T) {
+	dir := t.TempDir()
+	content := "fs.unlinkSync(filePath);\n"
+	path := writeTempFile(t, dir, "del.js", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangJavaScript)
+	requireFinding(t, findings, "mcp-destructive-fs")
+}
+
+func TestAnalyzeFile_JS_FsRmdirSync(t *testing.T) {
+	dir := t.TempDir()
+	content := "fs.rmdirSync(dirPath);\n"
+	path := writeTempFile(t, dir, "del.ts", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangTypeScript)
+	requireFinding(t, findings, "mcp-destructive-fs")
+}
+
+func TestAnalyzeFile_JS_ProcessEnv(t *testing.T) {
+	dir := t.TempDir()
+	content := "const key = process.env.API_KEY;\n"
+	path := writeTempFile(t, dir, "config.ts", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangTypeScript)
+	requireFinding(t, findings, "mcp-env-leakage")
+}
+
+// ── New Go patterns ───────────────────────────────────────────────────────────
+
+func TestAnalyzeFile_Go_ExecCommandConcatenation(t *testing.T) {
+	dir := t.TempDir()
+	content := `package main
+import "os/exec"
+func run(input string) {
+	exec.Command("bash", "-c", "echo "+input).Run()
+}
+`
+	path := writeTempFile(t, dir, "runner.go", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangGo)
+	requireFinding(t, findings, "mcp-cmd-injection")
+}
+
+func TestAnalyzeFile_Go_ExecCommandAlone(t *testing.T) {
+	dir := t.TempDir()
+	content := `package main
+import "os/exec"
+func run(args []string) {
+	exec.Command(args[0], args[1:]...).Run()
+}
+`
+	path := writeTempFile(t, dir, "runner.go", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangGo)
+	requireFinding(t, findings, "mcp-cmd-injection")
+}
+
+func TestAnalyzeFile_Go_OsRemove(t *testing.T) {
+	dir := t.TempDir()
+	content := `package main
+import "os"
+func clean(path string) { os.Remove(path) }
+`
+	path := writeTempFile(t, dir, "clean.go", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangGo)
+	requireFinding(t, findings, "mcp-destructive-fs")
+}
+
+func TestAnalyzeFile_Go_OsRemoveAll(t *testing.T) {
+	dir := t.TempDir()
+	content := `package main
+import "os"
+func clean(dir string) { os.RemoveAll(dir) }
+`
+	path := writeTempFile(t, dir, "clean.go", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangGo)
+	requireFinding(t, findings, "mcp-destructive-fs")
+}
+
+func TestAnalyzeFile_Go_TemplateHTML(t *testing.T) {
+	dir := t.TempDir()
+	content := `package main
+import "html/template"
+func render(s string) template.HTML { return template.HTML(s) }
+`
+	path := writeTempFile(t, dir, "tpl.go", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangGo)
+	requireFinding(t, findings, "mcp-xss-risk")
+}
+
+func TestAnalyzeFile_Go_NetDial(t *testing.T) {
+	dir := t.TempDir()
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{"net.Dial", `package main
+import "net"
+func connect() { net.Dial("tcp", host) }
+`},
+		{"net.DialTimeout", `package main
+import "net"
+func connect() { net.DialTimeout("tcp", host, timeout) }
+`},
+	}
+	s := newSAST(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeTempFile(t, dir, tt.name+".go", tt.content)
+			findings := s.AnalyzeFile(path, LangGo)
+			requireFinding(t, findings, "mcp-outbound-connection")
+		})
+	}
+}
+
+// ── Cross-language secret patterns ────────────────────────────────────────────
+
+func TestAnalyzeFile_BearerToken(t *testing.T) {
+	dir := t.TempDir()
+	tests := []struct {
+		name    string
+		content string
+		ext     string
+	}{
+		{"python", `headers = {"Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.payload.sig"}` + "\n", ".py"},
+		{"js", `const h = { Authorization: "Bearer abcdefghijklmnopqrstuvwxyz123456" };` + "\n", ".js"},
+		{"go", `req.Header.Set("Authorization", "Bearer some-long-token-value-here-123")` + "\n", ".go"},
+	}
+	s := newSAST(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeTempFile(t, dir, tt.name+tt.ext, tt.content)
+			lang := detectLanguage(path)
+			findings := s.AnalyzeFile(path, lang)
+			requireFinding(t, findings, "mcp-hardcoded-bearer-token")
+		})
+	}
+}
+
+func TestAnalyzeFile_PrivateKeyInSource(t *testing.T) {
+	dir := t.TempDir()
+	tests := []struct {
+		name    string
+		content string
+		ext     string
+	}{
+		{"python rsa", "key = \"\"\"-----BEGIN RSA PRIVATE KEY-----\"\"\"\n", ".py"},
+		{"js generic", "const pem = '-----BEGIN PRIVATE KEY-----';\n", ".js"},
+		{"go openssh", `const key = "-----BEGIN OPENSSH PRIVATE KEY-----"` + "\n", ".go"},
+	}
+	s := newSAST(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeTempFile(t, dir, tt.name+tt.ext, tt.content)
+			lang := detectLanguage(path)
+			findings := s.AnalyzeFile(path, lang)
+			requireFinding(t, findings, "mcp-hardcoded-private-key")
+		})
+	}
+}
+
+func TestAnalyzeFile_SlackWebhook(t *testing.T) {
+	dir := t.TempDir()
+	content := `WEBHOOK = "https://hooks.slack.com/services/T00/B00/xxx"` + "\n"
+	path := writeTempFile(t, dir, "notify.py", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangPython)
+	requireFinding(t, findings, "mcp-hardcoded-webhook")
+}
+
+func TestAnalyzeFile_DiscordWebhook(t *testing.T) {
+	dir := t.TempDir()
+	content := `const url = "https://discord.com/api/webhooks/123456/token";` + "\n"
+	path := writeTempFile(t, dir, "notify.ts", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangTypeScript)
+	requireFinding(t, findings, "mcp-hardcoded-webhook")
+}
+
+func TestAnalyzeFile_StripeLiveKey(t *testing.T) {
+	dir := t.TempDir()
+	content := `stripe_key = "sk_live_` + "TESTKEY00000000000000000" + `"` + "\n"
+	path := writeTempFile(t, dir, "billing.py", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangPython)
+	requireFinding(t, findings, "mcp-hardcoded-stripe-key")
+}
+
+func TestAnalyzeFile_TwilioKey(t *testing.T) {
+	dir := t.TempDir()
+	tests := []struct {
+		name    string
+		content string
+		rule    string
+	}{
+		{
+			name:    "SK api key",
+			content: "TWILIO_KEY = \"SKabcdefghijklmnopqrstuvwxyz123456\"\n",
+			rule:    "mcp-hardcoded-twilio-key",
+		},
+		{
+			name:    "AC account sid",
+			content: "account_sid = \"AC" + "00000000000000000000000000000000" + "\"\n",
+			rule:    "mcp-hardcoded-twilio-sid",
+		},
+	}
+	s := newSAST(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeTempFile(t, dir, tt.name+".py", tt.content)
+			findings := s.AnalyzeFile(path, LangPython)
+			requireFinding(t, findings, tt.rule)
+		})
+	}
+}
+
+// ── New egress patterns ───────────────────────────────────────────────────────
+
+func TestDetectEgress_PythonSocketConnect(t *testing.T) {
+	dir := t.TempDir()
+	content := "import socket\ns = socket.socket()\ns.connect((host, port))\n"
+	writeTempFile(t, dir, "sock.py", content)
+	s := newSAST(t)
+	findings := s.DetectEgress(dir)
+	found := false
+	for _, f := range findings {
+		if f.Method == "socket.connect" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected socket.connect egress finding")
+	}
+}
+
+func TestDetectEgress_PythonSmtplib(t *testing.T) {
+	dir := t.TempDir()
+	content := "import smtplib\nserver = smtplib.SMTP('smtp.gmail.com', 587)\n"
+	writeTempFile(t, dir, "mail.py", content)
+	s := newSAST(t)
+	findings := s.DetectEgress(dir)
+	found := false
+	for _, f := range findings {
+		if f.Method == "smtplib.SMTP" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected smtplib.SMTP egress finding")
+	}
+}
+
+func TestDetectEgress_PythonParamiko(t *testing.T) {
+	dir := t.TempDir()
+	content := "import paramiko\nclient = paramiko.SSHClient()\n"
+	writeTempFile(t, dir, "ssh.py", content)
+	s := newSAST(t)
+	findings := s.DetectEgress(dir)
+	found := false
+	for _, f := range findings {
+		if f.Method == "paramiko.SSHClient" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected paramiko.SSHClient egress finding")
+	}
+}
+
+func TestDetectEgress_JSNetConnect(t *testing.T) {
+	dir := t.TempDir()
+	content := "const net = require('net');\nnet.connect(port, host, cb);\n"
+	writeTempFile(t, dir, "client.js", content)
+	s := newSAST(t)
+	findings := s.DetectEgress(dir)
+	found := false
+	for _, f := range findings {
+		if f.Method == "net.connect" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected net.connect egress finding")
+	}
+}
+
+func TestDetectEgress_JSDgramCreateSocket(t *testing.T) {
+	dir := t.TempDir()
+	content := "const dgram = require('dgram');\nconst sock = dgram.createSocket('udp4');\n"
+	writeTempFile(t, dir, "udp.js", content)
+	s := newSAST(t)
+	findings := s.DetectEgress(dir)
+	found := false
+	for _, f := range findings {
+		if f.Method == "dgram.createSocket" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected dgram.createSocket egress finding")
+	}
+}
+
+func TestDetectEgress_JSWebSocket(t *testing.T) {
+	dir := t.TempDir()
+	content := "const ws = new WebSocket('wss://example.com/socket');\n"
+	writeTempFile(t, dir, "ws.ts", content)
+	s := newSAST(t)
+	findings := s.DetectEgress(dir)
+	found := false
+	for _, f := range findings {
+		if f.Method == "ws.WebSocket" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected ws.WebSocket egress finding")
+	}
+}
+
+func TestDetectEgress_JSXMLHttpRequest(t *testing.T) {
+	dir := t.TempDir()
+	content := "const xhr = new XMLHttpRequest();\nxhr.open('GET', url);\n"
+	writeTempFile(t, dir, "xhr.js", content)
+	s := newSAST(t)
+	findings := s.DetectEgress(dir)
+	found := false
+	for _, f := range findings {
+		if f.Method == "XMLHttpRequest" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected XMLHttpRequest egress finding")
+	}
+}
+
+func TestDetectEgress_GoHTTPNewRequest(t *testing.T) {
+	dir := t.TempDir()
+	content := `package main
+import "net/http"
+func call() {
+	req, _ := http.NewRequest("POST", url, body)
+	_ = req
+}
+`
+	writeTempFile(t, dir, "client.go", content)
+	s := newSAST(t)
+	findings := s.DetectEgress(dir)
+	found := false
+	for _, f := range findings {
+		if f.Method == "http.NewRequest" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected http.NewRequest egress finding")
+	}
+}
+
+func TestDetectEgress_GoRPCDial(t *testing.T) {
+	dir := t.TempDir()
+	content := `package main
+import "net/rpc"
+func dial() { rpc.Dial("tcp", addr) }
+`
+	writeTempFile(t, dir, "rpc.go", content)
+	s := newSAST(t)
+	findings := s.DetectEgress(dir)
+	found := false
+	for _, f := range findings {
+		if f.Method == "rpc.Dial" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected rpc.Dial egress finding")
+	}
+}
+
+// ── Test directory / file skipping ───────────────────────────────────────────
+
+func TestAnalyzeDirectory_SkipsTestDir(t *testing.T) {
+	dir := t.TempDir()
+	for _, testDirName := range []string{"test", "tests", "__tests__", "spec", "testdata"} {
+		td := filepath.Join(dir, testDirName)
+		if err := os.MkdirAll(td, 0755); err != nil {
+			t.Fatal(err)
+		}
+		writeTempFile(t, td, "vuln.py", "os.popen(cmd)\n")
+	}
+
+	s := newSAST(t)
+	findings := s.AnalyzeDirectory(dir)
+	if len(findings) != 0 {
+		t.Errorf("expected test directories to be skipped, got %d findings", len(findings))
+	}
+}
+
+func TestAnalyzeDirectory_SkipsTestFiles(t *testing.T) {
+	dir := t.TempDir()
+	// These should all be skipped
+	writeTempFile(t, dir, "main_test.go", "package main\nimport \"os/exec\"\nfunc TestExec(t *testing.T) { exec.Command(\"ls\") }\n")
+	writeTempFile(t, dir, "app.test.js", "child_process.exec(cmd);\n")
+	writeTempFile(t, dir, "app.test.ts", "child_process.exec(cmd);\n")
+	writeTempFile(t, dir, "app.spec.js", "child_process.exec(cmd);\n")
+	writeTempFile(t, dir, "app.spec.ts", "child_process.exec(cmd);\n")
+	writeTempFile(t, dir, "server_test.py", "os.popen(cmd)\n")
+	writeTempFile(t, dir, "test_server.py", "os.popen(cmd)\n")
+
+	s := newSAST(t)
+	findings := s.AnalyzeDirectory(dir)
+	if len(findings) != 0 {
+		t.Errorf("expected test files to be skipped, got %d findings: %v", len(findings), func() []string {
+			r := make([]string, len(findings))
+			for i, f := range findings {
+				r[i] = f.File
+			}
+			return r
+		}())
+	}
+}
+
+func TestDetectEgress_SkipsTestDirs(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"test", "tests", "__tests__", "spec", "testdata"} {
+		td := filepath.Join(dir, name)
+		if err := os.MkdirAll(td, 0755); err != nil {
+			t.Fatal(err)
+		}
+		writeTempFile(t, td, "helper.py", "requests.get(url)\n")
+	}
+
+	s := newSAST(t)
+	findings := s.DetectEgress(dir)
+	if len(findings) != 0 {
+		t.Errorf("expected test directories to be skipped in DetectEgress, got %d findings", len(findings))
+	}
+}
+
+func TestDetectEgress_SkipsTestFiles(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, dir, "service_test.go", "package main\nimport \"net/http\"\nfunc TestHTTP(t *testing.T) { http.Get(url) }\n")
+	writeTempFile(t, dir, "api.test.js", "fetch(url);\n")
+	writeTempFile(t, dir, "api.spec.ts", "fetch(url);\n")
+	writeTempFile(t, dir, "test_client.py", "requests.get(url)\n")
+
+	s := newSAST(t)
+	findings := s.DetectEgress(dir)
+	if len(findings) != 0 {
+		t.Errorf("expected test files to be skipped in DetectEgress, got %d findings", len(findings))
+	}
+}
+
+// ── isTestFile helper unit tests ──────────────────────────────────────────────
+
+func TestIsTestFile(t *testing.T) {
+	tests := []struct {
+		name string
+		want bool
+	}{
+		{"main_test.go", true},
+		{"app.test.js", true},
+		{"app.test.ts", true},
+		{"app.spec.js", true},
+		{"app.spec.ts", true},
+		{"app.test.mjs", true},
+		{"app.spec.mjs", true},
+		{"server_test.py", true},
+		{"test_server.py", true},
+		{"server.py", false},
+		{"app.js", false},
+		{"main.go", false},
+		{"index.ts", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isTestFile(tt.name)
+			if got != tt.want {
+				t.Errorf("isTestFile(%q) = %v, want %v", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsTestDir(t *testing.T) {
+	tests := []struct {
+		name string
+		want bool
+	}{
+		{"test", true},
+		{"tests", true},
+		{"__tests__", true},
+		{"spec", true},
+		{"testdata", true},
+		{"src", false},
+		{"handlers", false},
+		{"node_modules", false},
+		{".git", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isTestDir(tt.name)
+			if got != tt.want {
+				t.Errorf("isTestDir(%q) = %v, want %v", tt.name, got, tt.want)
+			}
+		})
+	}
+}
