@@ -11,6 +11,7 @@
 [![CI](https://github.com/oxvault/scanner/actions/workflows/go-test.yml/badge.svg)](https://github.com/oxvault/scanner/actions/workflows/go-test.yml)
 [![CVE Detection](https://img.shields.io/badge/CVE_Detection-12%2F12-brightgreen)](testdata/cve/)
 [![FP Rate](https://img.shields.io/badge/False_Positive_Rate-0%25-brightgreen)](benchmarks/false-positives/RESULTS.md)
+[![Discord](https://img.shields.io/discord/1353688988539187200?color=7289da&label=Discord&logo=discord&logoColor=white)](https://discord.gg/mysvyvHCX5)
 
 </div>
 
@@ -256,6 +257,12 @@ make test        # Run all tests
 make lint        # Run golangci-lint
 make scan-demo   # Build + scan example vulnerable servers
 ```
+
+## Community
+
+- **Discord:** [Join the Oxvault community](https://discord.gg/mysvyvHCX5) — discussion, bug reports, MCP security news
+- **Issues:** [GitHub Issues](https://github.com/oxvault/scanner/issues) — bug reports and feature requests
+- **PRs welcome** — especially new detection rules and CVE test cases
 
 ## License
 
