@@ -134,7 +134,11 @@ func hashTool(tool MCPTool) string {
 
 	// Sort keys for determinism
 	var normalized any
-	json.Unmarshal(data, &normalized)
+	if err := json.Unmarshal(data, &normalized); err != nil {
+		// If unmarshal fails, fall back to the raw data
+		hash := sha256.Sum256(data)
+		return fmt.Sprintf("%x", hash)
+	}
 	sortedData, _ := marshalSorted(normalized)
 
 	hash := sha256.Sum256(sortedData)

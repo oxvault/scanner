@@ -718,10 +718,6 @@ func TestWriteFinding_NoFile(t *testing.T) {
 	writeFinding(&b, f)
 	out := b.String()
 
-	if strings.Contains(out, ":") {
-		// Only acceptable colon is in the severity or fix context
-		// But no file:line should appear
-	}
 	if !strings.Contains(out, "mcp-test") {
 		t.Errorf("expected rule in output")
 	}

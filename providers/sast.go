@@ -467,7 +467,7 @@ func (s *sastAnalyzer) AnalyzeFile(path string, lang Language) []Finding {
 func (s *sastAnalyzer) AnalyzeDirectory(dir string) []Finding {
 	var findings []Finding
 
-	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+	_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -502,7 +502,7 @@ func (s *sastAnalyzer) AnalyzeDirectory(dir string) []Finding {
 func (s *sastAnalyzer) DetectEgress(dir string) []EgressFinding {
 	var findings []EgressFinding
 
-	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+	_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}

@@ -112,8 +112,12 @@ func TestDetectProjectLanguage_Unknown(t *testing.T) {
 func TestDetectProjectLanguage_PackageJSONTakesPriority(t *testing.T) {
 	// When both package.json and requirements.txt exist, JS wins
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"test"}`), 0644)
-	os.WriteFile(filepath.Join(dir, "requirements.txt"), []byte("flask"), 0644)
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"test"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "requirements.txt"), []byte("flask"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	lang := detectProjectLanguage(dir)
 	if lang != LangJavaScript {
 		t.Errorf("expected LangJavaScript when both package.json and requirements.txt exist, got %v", lang)
@@ -125,7 +129,9 @@ func TestDetectProjectLanguage_PackageJSONTakesPriority(t *testing.T) {
 func TestDetectServerCommand_JSWithPackageJSONName(t *testing.T) {
 	dir := t.TempDir()
 	pkgJSON := `{"name":"my-mcp-server","main":"src/index.js"}`
-	os.WriteFile(filepath.Join(dir, "package.json"), []byte(pkgJSON), 0644)
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(pkgJSON), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	cmd, args := detectServerCommand(dir, LangJavaScript)
 	if cmd != "npx" {
@@ -140,7 +146,9 @@ func TestDetectServerCommand_JSWithPackageJSONMainOnly(t *testing.T) {
 	dir := t.TempDir()
 	// No name, but has main
 	pkgJSON := `{"main":"dist/index.js"}`
-	os.WriteFile(filepath.Join(dir, "package.json"), []byte(pkgJSON), 0644)
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(pkgJSON), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	cmd, args := detectServerCommand(dir, LangJavaScript)
 	if cmd != "node" {
@@ -164,7 +172,9 @@ func TestDetectServerCommand_JSNoPackageJSON(t *testing.T) {
 
 func TestDetectServerCommand_JSInvalidPackageJSON(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "package.json"), []byte("not json"), 0644)
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte("not json"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	cmd, args := detectServerCommand(dir, LangJavaScript)
 	// Should fall back to node index.js
 	if cmd != "node" {
@@ -175,7 +185,9 @@ func TestDetectServerCommand_JSInvalidPackageJSON(t *testing.T) {
 
 func TestDetectServerCommand_PythonServerPy(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "server.py"), []byte("# server"), 0644)
+	if err := os.WriteFile(filepath.Join(dir, "server.py"), []byte("# server"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	cmd, args := detectServerCommand(dir, LangPython)
 	if cmd != "python3" {
@@ -188,7 +200,9 @@ func TestDetectServerCommand_PythonServerPy(t *testing.T) {
 
 func TestDetectServerCommand_PythonMainPy(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "main.py"), []byte("# main"), 0644)
+	if err := os.WriteFile(filepath.Join(dir, "main.py"), []byte("# main"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	cmd, args := detectServerCommand(dir, LangPython)
 	if cmd != "python3" {
@@ -261,7 +275,9 @@ func TestLanguageRuntime(t *testing.T) {
 func TestResolve_LocalDirectory_Exists(t *testing.T) {
 	dir := t.TempDir()
 	// Create a Go project
-	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module test\n\ngo 1.21"), 0644)
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module test\n\ngo 1.21"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	r := newResolver(t)
 	pkg, err := r.Resolve(dir)
@@ -282,7 +298,9 @@ func TestResolve_LocalDirectory_Exists(t *testing.T) {
 func TestResolve_LocalDirectory_JSProject(t *testing.T) {
 	dir := t.TempDir()
 	pkgJSON := `{"name":"test-server","main":"index.js"}`
-	os.WriteFile(filepath.Join(dir, "package.json"), []byte(pkgJSON), 0644)
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(pkgJSON), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	r := newResolver(t)
 	pkg, err := r.Resolve(dir)
@@ -299,8 +317,12 @@ func TestResolve_LocalDirectory_JSProject(t *testing.T) {
 
 func TestResolve_LocalDirectory_PythonProjectServerPy(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "requirements.txt"), []byte("fastmcp"), 0644)
-	os.WriteFile(filepath.Join(dir, "server.py"), []byte("# server"), 0644)
+	if err := os.WriteFile(filepath.Join(dir, "requirements.txt"), []byte("fastmcp"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "server.py"), []byte("# server"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	r := newResolver(t)
 	pkg, err := r.Resolve(dir)
@@ -318,7 +340,9 @@ func TestResolve_LocalDirectory_PythonProjectServerPy(t *testing.T) {
 func TestResolve_LocalFile_Python(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "server.py")
-	os.WriteFile(filePath, []byte("# server"), 0644)
+	if err := os.WriteFile(filePath, []byte("# server"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	r := newResolver(t)
 	pkg, err := r.Resolve(filePath)
@@ -344,7 +368,9 @@ func TestResolve_LocalFile_Python(t *testing.T) {
 func TestResolve_LocalFile_JS(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "index.js")
-	os.WriteFile(filePath, []byte("console.log('hi');"), 0644)
+	if err := os.WriteFile(filePath, []byte("console.log('hi');"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	r := newResolver(t)
 	pkg, err := r.Resolve(filePath)
@@ -362,7 +388,9 @@ func TestResolve_LocalFile_JS(t *testing.T) {
 func TestResolve_LocalFile_Go(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "main.go")
-	os.WriteFile(filePath, []byte("package main\nfunc main() {}"), 0644)
+	if err := os.WriteFile(filePath, []byte("package main\nfunc main() {}"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	r := newResolver(t)
 	pkg, err := r.Resolve(filePath)
@@ -388,7 +416,9 @@ func TestResolve_NonExistentPath(t *testing.T) {
 func TestResolve_LocalRelativePath(t *testing.T) {
 	// Create a temp dir and resolve it with relative-like notation
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module test"), 0644)
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module test"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	r := newResolver(t)
 	// Use the absolute path directly — relative resolution depends on cwd
@@ -404,7 +434,9 @@ func TestResolve_LocalRelativePath(t *testing.T) {
 func TestResolve_FileName(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "myserver.py")
-	os.WriteFile(filePath, []byte("# server"), 0644)
+	if err := os.WriteFile(filePath, []byte("# server"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	r := newResolver(t)
 	pkg, err := r.Resolve(filePath)
@@ -418,7 +450,9 @@ func TestResolve_FileName(t *testing.T) {
 
 func TestResolve_DirName(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module test"), 0644)
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module test"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	r := newResolver(t)
 	pkg, err := r.Resolve(dir)
@@ -477,7 +511,9 @@ func TestResolve_DefaultRoutesToLocal(t *testing.T) {
 func TestDetectServerCommand_TypeScript(t *testing.T) {
 	dir := t.TempDir()
 	pkgJSON := `{"name":"ts-server"}`
-	os.WriteFile(filepath.Join(dir, "package.json"), []byte(pkgJSON), 0644)
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(pkgJSON), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	// TypeScript is treated the same as JavaScript in detectServerCommand
 	cmd, args := detectServerCommand(dir, LangTypeScript)

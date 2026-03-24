@@ -92,9 +92,14 @@ func TestPin_ContainsAllToolNames(t *testing.T) {
 		t.Fatalf("Pin() error: %v", err)
 	}
 
-	data, _ := os.ReadFile(filepath.Join(dir, "pins.json"))
+	data, err := os.ReadFile(filepath.Join(dir, "pins.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	var pins map[string]string
-	json.Unmarshal(data, &pins)
+	if err := json.Unmarshal(data, &pins); err != nil {
+		t.Fatal(err)
+	}
 
 	for _, tool := range tools {
 		if _, ok := pins[tool.Name]; !ok {
@@ -109,9 +114,14 @@ func TestPin_HashIsHexSHA256(t *testing.T) {
 		t.Fatalf("Pin() error: %v", err)
 	}
 
-	data, _ := os.ReadFile(filepath.Join(dir, "pins.json"))
+	data, err := os.ReadFile(filepath.Join(dir, "pins.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	var pins map[string]string
-	json.Unmarshal(data, &pins)
+	if err := json.Unmarshal(data, &pins); err != nil {
+		t.Fatal(err)
+	}
 
 	for name, hash := range pins {
 		// SHA-256 in hex = 64 chars
@@ -146,9 +156,14 @@ func TestPin_OverwritesExistingPins(t *testing.T) {
 		t.Fatalf("second Pin(): %v", err)
 	}
 
-	data, _ := os.ReadFile(filepath.Join(dir, "pins.json"))
+	data, err := os.ReadFile(filepath.Join(dir, "pins.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	var pins map[string]string
-	json.Unmarshal(data, &pins)
+	if err := json.Unmarshal(data, &pins); err != nil {
+		t.Fatal(err)
+	}
 
 	if _, ok := pins["tool-a"]; ok {
 		t.Error("tool-a should have been replaced by second pin call")
