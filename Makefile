@@ -4,7 +4,7 @@ ifeq ($(OS),Windows_NT)
 	BIN := bin/oxvault.exe
 endif
 
-.PHONY: all build run test lint clean scan-demo
+.PHONY: all build run test lint clean scan-demo check
 
 all: build test
 
@@ -19,6 +19,9 @@ test:
 
 lint:
 	@golangci-lint run
+
+# Run before pushing — build + test + lint
+check: build test lint
 
 clean:
 	@rm -rf bin/ .oxvault/

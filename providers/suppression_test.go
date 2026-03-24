@@ -555,5 +555,5 @@ func TestParseLine(t *testing.T) {
 // ── NewSuppressor interface guard ─────────────────────────────────────────────
 
 func TestNewSuppressor_ImplementsInterface(t *testing.T) {
-	var _ Suppressor = NewSuppressor()
+	_ = NewSuppressor()
 }
