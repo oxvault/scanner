@@ -48,7 +48,7 @@ func main() {
 		Version: version,
 		Run: func(cmd *cobra.Command, args []string) {
 			printLogo()
-			cmd.Help()
+			_ = cmd.Help()
 		},
 	}
 
@@ -68,7 +68,7 @@ func printLogo() {
 	dim := color.New(color.Faint)
 	bold := color.New(color.Bold)
 
-	cyan.Fprintln(os.Stderr, asciiLogo)
+	_, _ = cyan.Fprintln(os.Stderr, asciiLogo)
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintf(os.Stderr, "  %s  %s\n",
 		bold.Sprint("Oxvault Scanner"),

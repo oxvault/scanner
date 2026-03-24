@@ -129,7 +129,7 @@ func TestPin_HashIsHexSHA256(t *testing.T) {
 			t.Errorf("tool %q: expected 64-char hex hash, got len=%d: %q", name, len(hash), hash)
 		}
 		for _, c := range hash {
-			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
 				t.Errorf("tool %q: hash contains non-hex char %q", name, c)
 				break
 			}

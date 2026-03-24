@@ -42,7 +42,7 @@ func (p *pinner) Pin(cmd string, args []string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("connect: %w", err)
 	}
-	defer p.mcpClient.Close(session)
+	defer func() { _ = p.mcpClient.Close(session) }()
 
 	tools, err := p.mcpClient.ListTools(session)
 	if err != nil {
@@ -62,7 +62,7 @@ func (p *pinner) Check(cmd string, args []string) (*PinReport, error) {
 	if err != nil {
 		return nil, fmt.Errorf("connect: %w", err)
 	}
-	defer p.mcpClient.Close(session)
+	defer func() { _ = p.mcpClient.Close(session) }()
 
 	tools, err := p.mcpClient.ListTools(session)
 	if err != nil {

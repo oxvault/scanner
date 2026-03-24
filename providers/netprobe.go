@@ -292,7 +292,7 @@ func parseProcNetFile(path string, dst map[string]bool) {
 	if err != nil {
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
 	// Skip header line.
