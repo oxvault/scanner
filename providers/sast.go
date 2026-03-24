@@ -221,6 +221,59 @@ var sourcePatterns = []sourcePattern{
 		langs:    []Language{LangPython, LangJavaScript, LangTypeScript},
 	},
 
+	// ── Path containment bypass — JavaScript/TypeScript ──────────────────────
+	//
+	// CVE-2025-53110 / CVE-2025-53109: using String.startsWith() as a directory
+	// containment check is bypassable.  The safe pattern requires resolving the
+	// real path first and appending a path separator before the check.
+
+	{
+		// readFileSync / readFile called on a variable that was checked with startsWith
+		// Pattern: detect readFileSync used after a startsWith containment guard
+		// (both lines appear in the same file, so we catch the readFileSync call itself
+		// when no path.resolve/realpathSync is present — detected at directory level).
+		pattern:  regexp.MustCompile(`\.startsWith\s*\([^)]*(?:Dir|dir|Path|path|Root|root|Base|base)[^)]*\)`),
+		rule:     "mcp-path-containment-bypass",
+		severity: SeverityHigh,
+		message:  "startsWith() used as path containment check — bypassable via prefix confusion or symlinks (use path.resolve + path.sep): %s",
+		langs:    []Language{LangJavaScript, LangTypeScript},
+	},
+
+	// ── Broken SSRF guard — JavaScript/TypeScript ────────────────────────────
+	//
+	// CVE-2025-65513: SSRF guard calls startsWith("10.") or startsWith("192.168.")
+	// on a full URL string instead of the extracted hostname, so the check always
+	// passes for targets like http://169.254.169.254/.
+
+	{
+		pattern:  regexp.MustCompile(`\.startsWith\s*\(\s*["'](10\.|192\.168\.|172\.)`),
+		rule:     "mcp-ssrf-broken-check",
+		severity: SeverityCritical,
+		message:  "startsWith() used to check for private IP — ineffective on full URLs (extract hostname first): %s",
+		langs:    []Language{LangJavaScript, LangTypeScript},
+	},
+
+	// ── MCP config with malicious shell commands — JSON ───────────────────────
+	//
+	// CVE-2025-54136: MCP server config (mcp.json / .cursor/mcp.json) can contain
+	// malicious commands that execute on IDE startup.  Flag PowerShell download
+	// cradles and IEX patterns in any JSON-like file.
+
+	{
+		pattern:  regexp.MustCompile(`(?i)(IEX|Invoke-Expression)\s*\(`),
+		rule:     "mcp-config-rce",
+		severity: SeverityCritical,
+		message:  "PowerShell Invoke-Expression (IEX) in MCP config — possible rug-pull RCE payload: %s",
+		langs:    []Language{LangJSON},
+	},
+	{
+		pattern:  regexp.MustCompile(`(?i)DownloadString\s*\(`),
+		rule:     "mcp-config-rce",
+		severity: SeverityCritical,
+		message:  "PowerShell DownloadString in MCP config — remote payload download pattern: %s",
+		langs:    []Language{LangJSON},
+	},
+
 	// ── Template injection — JavaScript/TypeScript ────────────────────────────
 
 	// (XSS via template.HTML is in Go section below)
@@ -573,9 +626,35 @@ func detectLanguage(path string) Language {
 		return LangTypeScript
 	case ".go":
 		return LangGo
+	case ".json":
+		// Only scan JSON files that look like MCP config files for malicious
+		// command patterns (rug-pull / CVE-2025-54136 class).
+		base := strings.ToLower(filepath.Base(path))
+		if isMCPConfigFile(base) {
+			return LangJSON
+		}
+		return LangUnknown
 	default:
 		return LangUnknown
 	}
+}
+
+// isMCPConfigFile returns true for JSON filenames commonly used as MCP server
+// configuration, where malicious command injection (rug-pull) is a known risk.
+func isMCPConfigFile(base string) bool {
+	mcpConfigNames := []string{
+		"mcp.json",
+		"mcp_servers.json",
+		"mcp-servers.json",
+		"claude_desktop_config.json",
+		"cursor_mcp.json",
+	}
+	for _, name := range mcpConfigNames {
+		if base == name {
+			return true
+		}
+	}
+	return false
 }
 
 func languageMatch(supported []Language, lang Language) bool {

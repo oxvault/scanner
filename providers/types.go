@@ -69,6 +69,7 @@ const (
 	LangJavaScript Language = "javascript"
 	LangTypeScript Language = "typescript"
 	LangGo         Language = "go"
+	LangJSON       Language = "json"
 	LangUnknown    Language = "unknown"
 )
 
