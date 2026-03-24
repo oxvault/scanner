@@ -239,7 +239,7 @@ oxvault check <command> [args...]         # Compare against saved hashes
 
 ## Real-World Scan Results
 
-We scanned **67 real MCP servers** from the ecosystem — including official, enterprise, and community servers. Results:
+We scanned **67 real MCP servers** from the ecosystem -including official, enterprise, and community servers. Results:
 
 | Metric | Result |
 |---|---|
