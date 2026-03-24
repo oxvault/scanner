@@ -30,25 +30,25 @@ oxvault scan github:user/mcp-server
 
 ### Table of Contents
 
-- [What It Catches](#what-it-catches) — SAST, credentials, tool poisoning, supply chain, SSRF
-- [Quick Start](#quick-start) — install and scan in seconds
-- [Examples](#examples) — scan output, rug pulls, install hooks, CI/CD, confidence filtering
-- [CLI Options](#all-cli-options) — all flags and commands
-- [Real-World Results](#real-world-scan-results) — 117 servers scanned, notable findings
-- [Benchmarks](#benchmarks) — CVE detection, false positive rate, competitive comparison
-- [GitHub Action](#github-action) — `oxvault/scan-action@v1` for CI/CD
-- [Community](#community) — Discord, issues, contributing
+- [What It Catches](#what-it-catches) - SAST, credentials, tool poisoning, supply chain, SSRF
+- [Quick Start](#quick-start) - install and scan in seconds
+- [Examples](#examples) - scan output, rug pulls, install hooks, CI/CD, confidence filtering
+- [CLI Options](#all-cli-options) - all flags and commands
+- [Real-World Results](#real-world-scan-results) - 117 servers scanned, notable findings
+- [Benchmarks](#benchmarks) - CVE detection, false positive rate, competitive comparison
+- [GitHub Action](#github-action) - `oxvault/scan-action@v1` for CI/CD
+- [Community](#community) - Discord, issues, contributing
 
 ---
 
 ## Why Oxvault
 
-- **12/12 known MCP CVEs detected** — [validated against real vulnerabilities](testdata/cve/)
-- **117 servers scanned, 72% had findings** — [real-world validation](#real-world-scan-results)
-- **Confidence scoring** — every finding rated high/medium/low, filter with `--min-confidence`
-- **Single binary, zero dependencies** — install and run in seconds
-- **CWE references on every finding** — enterprise-grade reporting
-- **Works offline** — no cloud API, no telemetry, no account required
+- **12/12 known MCP CVEs detected** - [validated against real vulnerabilities](testdata/cve/)
+- **117 servers scanned, 72% had findings** - [real-world validation](#real-world-scan-results)
+- **Confidence scoring** - every finding rated high/medium/low, filter with `--min-confidence`
+- **Single binary, zero dependencies** - install and run in seconds
+- **CWE references on every finding** - enterprise-grade reporting
+- **Works offline** - no cloud API, no telemetry, no account required
 
 ## What It Catches
 
@@ -232,14 +232,14 @@ $ oxvault scan --config auto
 
 ### Filter by confidence
 
-Every finding includes a confidence level — **high**, **medium**, or **low**. Use `--min-confidence` to filter noise:
+Every finding includes a confidence level - **high**, **medium**, or **low**. Use `--min-confidence` to filter noise:
 
 ```bash
 # Only show high-confidence findings (definite vulnerabilities)
 $ oxvault scan ./server --min-confidence=high
 
   ✗ CRITICAL [high] mcp-cmd-injection (CWE-78)
-    server.py:24 — os.popen(f"curl {user_input}")
+    server.py:24 - os.popen(f"curl {user_input}")
 
   1 CRITICAL · 0 HIGH · 0 WARNING · 0 INFO
 ```
@@ -283,7 +283,7 @@ oxvault check <command> [args...]         # Compare against saved hashes
 
 ## Real-World Scan Results
 
-We scanned **117 real MCP servers** from the ecosystem — including official, enterprise, and community servers. Results:
+We scanned **117 real MCP servers** from the ecosystem - including official, enterprise, and community servers. Results:
 
 | Metric | Result |
 |---|---|
