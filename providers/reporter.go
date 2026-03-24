@@ -201,17 +201,32 @@ func (r *reporter) reportTerminal(findings []Finding) ([]byte, error) {
 	return []byte(b.String()), nil
 }
 
+// confidenceLabel returns a bracketed confidence label for terminal output.
+func confidenceLabel(c Confidence) string {
+	switch c {
+	case ConfidenceHigh:
+		return colorPass.Sprint("[high]")
+	case ConfidenceMedium:
+		return colorWarning.Sprint("[medium]")
+	case ConfidenceLow:
+		return colorDim.Sprint("[low]")
+	default:
+		return colorDim.Sprint("[unknown]")
+	}
+}
+
 // writeFinding writes a single colored finding block to the builder.
 func writeFinding(b *strings.Builder, f Finding) {
-	// Icon + severity badge + rule name (+ CWE when available)
+	// Icon + severity badge + confidence + rule name (+ CWE when available)
 	icon := severityIcon(f.Severity)
 	badge := severityLabel(f.Severity)
+	conf := confidenceLabel(f.Confidence)
 	ruleName := f.Rule
 	if f.CWE != "" {
 		ruleName = f.Rule + " (" + f.CWE + ")"
 	}
 	rule := colorBold.Sprint(ruleName)
-	fmt.Fprintf(b, "  %s %s %s\n", icon, badge, rule)
+	fmt.Fprintf(b, "  %s %s %s %s\n", icon, badge, conf, rule)
 
 	// File location
 	if f.File != "" {
@@ -272,7 +287,8 @@ func (r *reporter) reportSARIF(findings []Finding) ([]byte, error) {
 		} `json:"physicalLocation,omitempty"`
 	}
 	type sarifProperties struct {
-		CWE string `json:"cwe,omitempty"`
+		CWE        string `json:"cwe,omitempty"`
+		Confidence string `json:"confidence,omitempty"`
 	}
 	type sarifResult struct {
 		RuleID      string          `json:"ruleId"`
@@ -308,8 +324,15 @@ func (r *reporter) reportSARIF(findings []Finding) ([]byte, error) {
 			Level:   severityToSARIF(f.Severity),
 			Message: sarifMessage{Text: f.Message},
 		}
-		if f.CWE != "" {
-			result.Properties = &sarifProperties{CWE: f.CWE}
+		if f.CWE != "" || f.Confidence != 0 {
+			props := &sarifProperties{}
+			if f.CWE != "" {
+				props.CWE = f.CWE
+			}
+			if f.Confidence != 0 {
+				props.Confidence = f.Confidence.String()
+			}
+			result.Properties = props
 		}
 		if f.File != "" {
 			loc := sarifLocation{}

@@ -15,110 +15,123 @@ func NewRuleMatcher() RuleMatcher {
 
 // Description poisoning patterns
 var descriptionPatterns = []struct {
-	pattern  *regexp.Regexp
-	rule     string
-	severity Severity
-	message  string
-	cwe      string
+	pattern    *regexp.Regexp
+	rule       string
+	severity   Severity
+	confidence Confidence
+	message    string
+	cwe        string
 }{
 	// ── Existing patterns ─────────────────────────────────────────────────────
 	{
-		pattern:  regexp.MustCompile(`(?i)<(IMPORTANT|SYSTEM|INST|INSTRUCTION|HIDDEN|NOTE)[^>]*>`),
-		rule:     "mcp-tool-poisoning",
-		severity: SeverityCritical,
-		message:  "Tool description contains hidden instruction tag <%s>",
-		cwe:      "CWE-1321",
+		pattern:    regexp.MustCompile(`(?i)<(IMPORTANT|SYSTEM|INST|INSTRUCTION|HIDDEN|NOTE)[^>]*>`),
+		rule:       "mcp-tool-poisoning",
+		severity:   SeverityCritical,
+		confidence: ConfidenceHigh,
+		message:    "Tool description contains hidden instruction tag <%s>",
+		cwe:        "CWE-1321",
 	},
 	{
-		pattern:  regexp.MustCompile(`(?i)~\/\.(ssh|aws|cursor|config|gnupg|docker|kube)`),
-		rule:     "mcp-sensitive-path-ref",
-		severity: SeverityHigh,
-		message:  "Tool description references sensitive file path: %s",
-		cwe:      "CWE-200",
+		pattern:    regexp.MustCompile(`(?i)~\/\.(ssh|aws|cursor|config|gnupg|docker|kube)`),
+		rule:       "mcp-sensitive-path-ref",
+		severity:   SeverityHigh,
+		confidence: ConfidenceHigh,
+		message:    "Tool description references sensitive file path: %s",
+		cwe:        "CWE-200",
 	},
 	{
-		pattern:  regexp.MustCompile(`(?i)do\s+not\s+(tell|mention|inform|show|reveal|display)`),
-		rule:     "mcp-secrecy-instruction",
-		severity: SeverityHigh,
-		message:  "Tool description instructs LLM to hide behavior: %s",
-		cwe:      "CWE-1321",
+		pattern:    regexp.MustCompile(`(?i)do\s+not\s+(tell|mention|inform|show|reveal|display)`),
+		rule:       "mcp-secrecy-instruction",
+		severity:   SeverityHigh,
+		confidence: ConfidenceHigh,
+		message:    "Tool description instructs LLM to hide behavior: %s",
+		cwe:        "CWE-1321",
 	},
 	{
-		pattern:  regexp.MustCompile(`(?i)(ignore|forget|disregard|override|bypass).{0,50}(previous|prior|above|earlier|instructions|rules)`),
-		rule:     "mcp-prompt-override",
-		severity: SeverityCritical,
-		message:  "Tool description attempts to override LLM instructions: %s",
-		cwe:      "CWE-74",
+		pattern:    regexp.MustCompile(`(?i)(ignore|forget|disregard|override|bypass).{0,50}(previous|prior|above|earlier|instructions|rules)`),
+		rule:       "mcp-prompt-override",
+		severity:   SeverityCritical,
+		confidence: ConfidenceMedium,
+		message:    "Tool description attempts to override LLM instructions: %s",
+		cwe:        "CWE-74",
 	},
 	{
-		pattern:  regexp.MustCompile(`(?i)pass.{0,30}(content|data|file|key|secret|token).{0,30}(parameter|argument|field|param)`),
-		rule:     "mcp-exfiltration-instruction",
-		severity: SeverityCritical,
-		message:  "Tool description instructs data exfiltration via parameter: %s",
-		cwe:      "CWE-200",
+		pattern:    regexp.MustCompile(`(?i)pass.{0,30}(content|data|file|key|secret|token).{0,30}(parameter|argument|field|param)`),
+		rule:       "mcp-exfiltration-instruction",
+		severity:   SeverityCritical,
+		confidence: ConfidenceMedium,
+		message:    "Tool description instructs data exfiltration via parameter: %s",
+		cwe:        "CWE-200",
 	},
 	{
-		pattern:  regexp.MustCompile(`(?i)(read|access|open|cat|get).{0,30}(id_rsa|credentials|\.env|mcp\.json|config\.json|password|secret)`),
-		rule:     "mcp-credential-access",
-		severity: SeverityCritical,
-		message:  "Tool description instructs credential access: %s",
-		cwe:      "CWE-522",
+		pattern:    regexp.MustCompile(`(?i)(read|access|open|cat|get).{0,30}(id_rsa|credentials|\.env|mcp\.json|config\.json|password|secret)`),
+		rule:       "mcp-credential-access",
+		severity:   SeverityCritical,
+		confidence: ConfidenceHigh,
+		message:    "Tool description instructs credential access: %s",
+		cwe:        "CWE-522",
 	},
 
 	// ── HTML comment injection ─────────────────────────────────────────────────
 	// Catches <!-- ... --> blocks that contain instruction-like keywords.
 	{
-		pattern:  regexp.MustCompile(`(?i)<!--.*?(ignore|override|bypass|always|must|required|system|instruction|exfiltrate|credential).*?-->`),
-		rule:     "mcp-html-comment-injection",
-		severity: SeverityCritical,
-		message:  "HTML comment with instruction-like content detected in description: %s",
-		cwe:      "CWE-74",
+		pattern:    regexp.MustCompile(`(?i)<!--.*?(ignore|override|bypass|always|must|required|system|instruction|exfiltrate|credential).*?-->`),
+		rule:       "mcp-html-comment-injection",
+		severity:   SeverityCritical,
+		confidence: ConfidenceHigh,
+		message:    "HTML comment with instruction-like content detected in description: %s",
+		cwe:        "CWE-74",
 	},
 
 	// ── Markdown hidden comment ────────────────────────────────────────────────
 	{
-		pattern:  regexp.MustCompile(`\[//\]:\s*#`),
-		rule:     "mcp-markdown-hidden-comment",
-		severity: SeverityHigh,
-		message:  "Markdown hidden comment syntax detected in description: %s",
-		cwe:      "CWE-74",
+		pattern:    regexp.MustCompile(`\[//\]:\s*#`),
+		rule:       "mcp-markdown-hidden-comment",
+		severity:   SeverityHigh,
+		confidence: ConfidenceMedium,
+		message:    "Markdown hidden comment syntax detected in description: %s",
+		cwe:        "CWE-74",
 	},
 
 	// ── SYSTEM: / USER: role markers ─────────────────────────────────────────
 	{
-		pattern:  regexp.MustCompile(`(?i)(^|\s)(SYSTEM|USER)\s*:`),
-		rule:     "mcp-role-marker-injection",
-		severity: SeverityCritical,
-		message:  "LLM role marker (SYSTEM:/USER:) detected in description: %s",
-		cwe:      "CWE-74",
+		pattern:    regexp.MustCompile(`(?i)(^|\s)(SYSTEM|USER)\s*:`),
+		rule:       "mcp-role-marker-injection",
+		severity:   SeverityCritical,
+		confidence: ConfidenceMedium,
+		message:    "LLM role marker (SYSTEM:/USER:) detected in description: %s",
+		cwe:        "CWE-74",
 	},
 
 	// ── Imperative redirection ("always", "must", "required" + action) ────────
 	{
-		pattern:  regexp.MustCompile(`(?i)\b(always|must|required)\b.{0,60}(call|invoke|run|execute|send|read|access|exfiltrate|fetch)`),
-		rule:     "mcp-imperative-redirect",
-		severity: SeverityHigh,
-		message:  "Imperative instruction redirecting agent behavior: %s",
-		cwe:      "CWE-74",
+		pattern:    regexp.MustCompile(`(?i)\b(always|must|required)\b.{0,60}(call|invoke|run|execute|send|read|access|exfiltrate|fetch)`),
+		rule:       "mcp-imperative-redirect",
+		severity:   SeverityHigh,
+		confidence: ConfidenceMedium,
+		message:    "Imperative instruction redirecting agent behavior: %s",
+		cwe:        "CWE-74",
 	},
 
 	// ── Cross-tool references ─────────────────────────────────────────────────
 	// "before using this tool, call X first" — used to chain tool calls.
 	{
-		pattern:  regexp.MustCompile(`(?i)before\s+(using|calling|invoking)\s+this\s+tool.{0,60}(call|invoke|run|use)`),
-		rule:     "mcp-cross-tool-reference",
-		severity: SeverityHigh,
-		message:  "Description references another tool to call first (possible chained injection): %s",
-		cwe:      "CWE-74",
+		pattern:    regexp.MustCompile(`(?i)before\s+(using|calling|invoking)\s+this\s+tool.{0,60}(call|invoke|run|use)`),
+		rule:       "mcp-cross-tool-reference",
+		severity:   SeverityHigh,
+		confidence: ConfidenceMedium,
+		message:    "Description references another tool to call first (possible chained injection): %s",
+		cwe:        "CWE-74",
 	},
 
 	// ── Emotional manipulation ────────────────────────────────────────────────
 	{
-		pattern:  regexp.MustCompile(`(?i)\b(urgent|critical\s+override|emergency|immediately\s+required)\b`),
-		rule:     "mcp-emotional-manipulation",
-		severity: SeverityHigh,
-		message:  "Emotional manipulation language detected in description: %s",
-		cwe:      "CWE-74",
+		pattern:    regexp.MustCompile(`(?i)\b(urgent|critical\s+override|emergency|immediately\s+required)\b`),
+		rule:       "mcp-emotional-manipulation",
+		severity:   SeverityHigh,
+		confidence: ConfidenceLow,
+		message:    "Emotional manipulation language detected in description: %s",
+		cwe:        "CWE-74",
 	},
 }
 
@@ -363,11 +376,17 @@ func (r *ruleMatcher) ScanDescription(description string) []Finding {
 				}
 				msg = fmt.Sprintf(msg, matched)
 			}
+			confidence := p.confidence
+			if confidence == 0 {
+				confidence = ConfidenceMedium
+			}
 			findings = append(findings, Finding{
-				Rule:     p.rule,
-				Severity: p.severity,
-				Message:  msg,
-				CWE:      p.cwe,
+				Rule:            p.rule,
+				Severity:        p.severity,
+				Confidence:      confidence,
+				ConfidenceLabel: confidence.String(),
+				Message:         msg,
+				CWE:             p.cwe,
 			})
 		}
 	}
@@ -396,11 +415,13 @@ func (r *ruleMatcher) ScanArguments(args map[string]any) []Finding {
 					matched = matched[:80] + "..."
 				}
 				findings = append(findings, Finding{
-					Rule:     p.rule,
-					Severity: p.severity,
-					Message:  fmt.Sprintf(p.message, matched),
-					Tool:     key,
-					CWE:      p.cwe,
+					Rule:            p.rule,
+					Severity:        p.severity,
+					Confidence:      ConfidenceMedium,
+					ConfidenceLabel: ConfidenceMedium.String(),
+					Message:         fmt.Sprintf(p.message, matched),
+					Tool:            key,
+					CWE:             p.cwe,
 				})
 			}
 		}
@@ -415,10 +436,12 @@ func (r *ruleMatcher) ScanResponse(response string) []Finding {
 	for _, p := range responsePatterns {
 		if p.pattern.MatchString(response) {
 			findings = append(findings, Finding{
-				Rule:     p.rule,
-				Severity: p.severity,
-				Message:  p.message,
-				CWE:      p.cwe,
+				Rule:            p.rule,
+				Severity:        p.severity,
+				Confidence:      ConfidenceHigh,
+				ConfidenceLabel: ConfidenceHigh.String(),
+				Message:         p.message,
+				CWE:             p.cwe,
 			})
 		}
 	}
@@ -486,10 +509,12 @@ func detectInvisibleChars(text string) []Finding {
 
 	if invisibleCount > 0 {
 		findings = append(findings, Finding{
-			Rule:     "mcp-unicode-injection",
-			Severity: SeverityCritical,
-			Message:  fmt.Sprintf("Found %d invisible Unicode characters in tool description (possible steganographic payload)", invisibleCount),
-			CWE:      "CWE-116",
+			Rule:            "mcp-unicode-injection",
+			Severity:        SeverityCritical,
+			Confidence:      ConfidenceMedium,
+			ConfidenceLabel: ConfidenceMedium.String(),
+			Message:         fmt.Sprintf("Found %d invisible Unicode characters in tool description (possible steganographic payload)", invisibleCount),
+			CWE:             "CWE-116",
 		})
 	}
 
@@ -497,10 +522,12 @@ func detectInvisibleChars(text string) []Finding {
 	for _, r := range text {
 		if r >= 0xE0000 && r <= 0xE007F {
 			findings = append(findings, Finding{
-				Rule:     "mcp-unicode-tags-block",
-				Severity: SeverityCritical,
-				Message:  "Unicode Tags block characters detected — hidden ASCII message embedded in description",
-				CWE:      "CWE-116",
+				Rule:            "mcp-unicode-tags-block",
+				Severity:        SeverityCritical,
+				Confidence:      ConfidenceHigh,
+				ConfidenceLabel: ConfidenceHigh.String(),
+				Message:         "Unicode Tags block characters detected — hidden ASCII message embedded in description",
+				CWE:             "CWE-116",
 			})
 			break
 		}

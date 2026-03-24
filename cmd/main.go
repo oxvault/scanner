@@ -73,10 +73,38 @@ func printBanner(target string) {
 		bold.Sprint(target))
 }
 
+// parseMinConfidence converts a string flag value to a Confidence level.
+// Unknown values fall back to ConfidenceLow (show all).
+func parseMinConfidence(s string) providers.Confidence {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "high":
+		return providers.ConfidenceHigh
+	case "medium":
+		return providers.ConfidenceMedium
+	default:
+		return providers.ConfidenceLow
+	}
+}
+
+// filterByConfidence removes findings below the given minimum confidence level.
+func filterByConfidence(findings []providers.Finding, min providers.Confidence) []providers.Finding {
+	if min <= providers.ConfidenceLow {
+		return findings
+	}
+	out := make([]providers.Finding, 0, len(findings))
+	for _, f := range findings {
+		if f.Confidence >= min {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 func newScanCmd() *cobra.Command {
 	var (
 		format         string
 		failOn         string
+		minConfidence  string
 		verbose        bool
 		skipSAST       bool
 		skipManifest   bool
@@ -135,18 +163,21 @@ Config-based scanning:
 				FailOn:       cfg.FailOn,
 			}
 
+			minConf := parseMinConfidence(minConfidence)
+
 			// --config mode: scan all servers from one or more config files
 			if configPath != "" {
-				return runConfigScan(application, cfg, scanOpts, configPath)
+				return runConfigScan(application, cfg, scanOpts, configPath, minConf)
 			}
 
 			// Traditional single-target mode
-			return runSingleScan(application, cfg, scanOpts, args[0])
+			return runSingleScan(application, cfg, scanOpts, args[0], minConf)
 		},
 	}
 
 	cmd.Flags().StringVarP(&format, "format", "f", "terminal", "Output format: terminal, sarif, json")
 	cmd.Flags().StringVar(&failOn, "fail-on", "critical", "Exit non-zero at this severity: critical, high, warning, info")
+	cmd.Flags().StringVar(&minConfidence, "min-confidence", "low", "Minimum confidence level to report: low, medium, high")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Verbose output")
 	cmd.Flags().BoolVar(&skipSAST, "skip-sast", false, "Skip source code analysis")
 	cmd.Flags().BoolVar(&skipManifest, "skip-manifest", false, "Skip tool description analysis")
@@ -160,7 +191,7 @@ Config-based scanning:
 }
 
 // runSingleScan handles the traditional `oxvault scan <target>` path.
-func runSingleScan(application *app.App, cfg *config.Config, opts engines.ScanOptions, target string) error {
+func runSingleScan(application *app.App, cfg *config.Config, opts engines.ScanOptions, target string, minConf providers.Confidence) error {
 	if cfg.OutputFormat == providers.FormatTerminal {
 		printBanner(target)
 
@@ -205,6 +236,8 @@ func runSingleScan(application *app.App, cfg *config.Config, opts engines.ScanOp
 	if err != nil {
 		return fmt.Errorf("scan: %w", err)
 	}
+
+	report.Findings = filterByConfidence(report.Findings, minConf)
 
 	output, err := application.GetReporter().Report(report.Findings, cfg.OutputFormat)
 	if err != nil {
@@ -269,7 +302,7 @@ func printSuppressedSection(findings []providers.Finding) {
 // runConfigScan handles `oxvault scan --config <path|auto>`.
 // It discovers all configured MCP servers, scans each one individually,
 // and aggregates findings with per-server headers in terminal mode.
-func runConfigScan(application *app.App, cfg *config.Config, opts engines.ScanOptions, configPath string) error {
+func runConfigScan(application *app.App, cfg *config.Config, opts engines.ScanOptions, configPath string, minConf providers.Confidence) error {
 	result, err := config.Discover(configPath)
 	if err != nil {
 		return fmt.Errorf("discover config: %w", err)
@@ -323,6 +356,9 @@ func runConfigScan(application *app.App, cfg *config.Config, opts engines.ScanOp
 			fmt.Fprintf(os.Stderr, "  scan error for %q: %v\n\n", srv.Name, scanErr)
 			continue
 		}
+
+		// Filter by minimum confidence before reporting
+		report.Findings = filterByConfidence(report.Findings, minConf)
 
 		// Tag every finding with the server name for aggregation display
 		for i := range report.Findings {

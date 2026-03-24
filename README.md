@@ -17,15 +17,38 @@
 
 ---
 
-MCP (Model Context Protocol) is the standard for connecting AI agents (Claude, GPT, Copilot, Cursor) to external tools. **66% of MCP servers have security vulnerabilities.** Oxvault catches them before installation.
+MCP (Model Context Protocol) is the standard for connecting AI agents (Claude, GPT, Copilot, Cursor) to external tools. **72% of MCP servers have security vulnerabilities.** Oxvault catches them before installation.
+
+**117 real servers scanned** | **72% had findings** | **1,150 actionable vulnerabilities** | **12/12 CVEs detected** | **0% false positives**
+
+```bash
+go install github.com/oxvault/scanner/cmd@latest
+oxvault scan github:user/mcp-server
+```
+
+---
+
+### Table of Contents
+
+- [What It Catches](#what-it-catches) — SAST, credentials, tool poisoning, supply chain, SSRF
+- [Quick Start](#quick-start) — install and scan in seconds
+- [Examples](#examples) — scan output, rug pulls, install hooks, CI/CD, confidence filtering
+- [CLI Options](#all-cli-options) — all flags and commands
+- [Real-World Results](#real-world-scan-results) — 117 servers scanned, notable findings
+- [Benchmarks](#benchmarks) — CVE detection, false positive rate, competitive comparison
+- [GitHub Action](#github-action) — `oxvault/scan-action@v1` for CI/CD
+- [Community](#community) — Discord, issues, contributing
+
+---
 
 ## Why Oxvault
 
-- **12/12 known MCP CVEs detected** - [validated against real vulnerabilities](testdata/cve/)
-- **0% false positive rate** - [benchmarked against 10 official MCP servers](benchmarks/false-positives/RESULTS.md)
-- **Single binary, zero dependencies** - install and run in seconds
-- **Every finding includes a CWE reference** - enterprise-grade reporting
-- **Works offline** - no cloud API, no telemetry, no account required
+- **12/12 known MCP CVEs detected** — [validated against real vulnerabilities](testdata/cve/)
+- **117 servers scanned, 72% had findings** — [real-world validation](#real-world-scan-results)
+- **Confidence scoring** — every finding rated high/medium/low, filter with `--min-confidence`
+- **Single binary, zero dependencies** — install and run in seconds
+- **CWE references on every finding** — enterprise-grade reporting
+- **Works offline** — no cloud API, no telemetry, no account required
 
 ## What It Catches
 
@@ -207,6 +230,26 @@ $ oxvault scan --config auto
     sarif_file: results.sarif
 ```
 
+### Filter by confidence
+
+Every finding includes a confidence level — **high**, **medium**, or **low**. Use `--min-confidence` to filter noise:
+
+```bash
+# Only show high-confidence findings (definite vulnerabilities)
+$ oxvault scan ./server --min-confidence=high
+
+  ✗ CRITICAL [high] mcp-cmd-injection (CWE-78)
+    server.py:24 — os.popen(f"curl {user_input}")
+
+  1 CRITICAL · 0 HIGH · 0 WARNING · 0 INFO
+```
+
+| Confidence | Meaning | Examples |
+|---|---|---|
+| **high** | Almost certainly a real vulnerability | `os.popen()` with user input, hardcoded AWS keys, `pickle.load()`, tool poisoning with credential paths |
+| **medium** | Likely real, needs verification | `subprocess.Popen()`, `eval()`, `exec.Command`, path traversal |
+| **low** | Informational, may be false positive | Env var reads, temp dir cleanup, bare imports, SSRF risk patterns |
+
 ## All CLI Options
 
 ```bash
@@ -215,6 +258,7 @@ oxvault scan <target>                    # Local path, npm package, or github:us
 oxvault scan --config <path|auto>        # Scan all servers from MCP config files
 oxvault scan --format <terminal|sarif|json>
 oxvault scan --fail-on <critical|high|warning|info>
+oxvault scan --min-confidence <high|medium|low>  # Filter by confidence (default: low)
 oxvault scan --skip-sast                 # Skip source code analysis
 oxvault scan --skip-manifest             # Skip MCP connection + tool description scan
 oxvault scan --skip-egress               # Skip network egress detection
@@ -232,22 +276,22 @@ oxvault check <command> [args...]         # Compare against saved hashes
 | Metric | Result |
 |---|---|
 | **CVE detection rate** | [12/12 (100%)](testdata/cve/) - validated against real MCP CVEs |
-| **Real-world scan** | [67 servers scanned, 67% had findings, 546 actionable](#real-world-scan-results) |
+| **Real-world scan** | [117 servers scanned, 72% had findings, 1,150 actionable](#real-world-scan-results) |
 | **False positive rate** | [0% across 10 official MCP servers](benchmarks/false-positives/RESULTS.md) |
 | **DVMCP challenge detection** | [31 findings across 8/10 challenges](benchmarks/competitive/RESULTS.md) |
 | **vs. competitors** | [Feature comparison with mcp-scan, Snyk, Enkrypt, Cisco](benchmarks/competitive/RESULTS.md) |
 
 ## Real-World Scan Results
 
-We scanned **67 real MCP servers** from the ecosystem -including official, enterprise, and community servers. Results:
+We scanned **117 real MCP servers** from the ecosystem — including official, enterprise, and community servers. Results:
 
 | Metric | Result |
 |---|---|
-| **Servers scanned** | 67 (GitHub, Stripe, AWS, Cloudflare, Microsoft, Supabase, Neon, Grafana, etc.) |
-| **Vulnerability rate** | 67% of servers had security findings |
-| **Actionable findings** | 546 HIGH + CRITICAL across all servers |
-| **Critical findings** | 179 (command injection, hardcoded secrets, code eval) |
-| **Clean servers** | 22 (33%) |
+| **Servers scanned** | 117 (GitHub, Stripe, AWS, Cloudflare, Microsoft, Supabase, Neon, Grafana, etc.) |
+| **Vulnerability rate** | 72% of servers had security findings |
+| **Actionable findings** | 1,150 HIGH + CRITICAL across all servers |
+| **Critical findings** | 347 (command injection, hardcoded secrets, code eval) |
+| **Clean servers** | 32 (28%) |
 
 ### Notable findings on real servers
 
@@ -276,6 +320,19 @@ The [`examples/vulnerable-servers/`](examples/vulnerable-servers/) directory con
 | [`ssrf/`](examples/vulnerable-servers/ssrf/) | Broken private IP validation (CVE-2025-65513 pattern) |
 | [`hardcoded-creds/`](examples/vulnerable-servers/hardcoded-creds/) | AWS, OpenAI, GitHub, Stripe, Bearer tokens |
 | [`malicious-postinstall/`](examples/vulnerable-servers/malicious-postinstall/) | `curl \| sh` in npm postinstall + vulnerable dep |
+
+## GitHub Action
+
+Scan MCP servers in your CI/CD pipeline with [`oxvault/scan-action`](https://github.com/oxvault/scan-action):
+
+```yaml
+- uses: oxvault/scan-action@v1
+  with:
+    target: ./my-mcp-server
+    fail-on: high
+```
+
+SARIF results automatically appear in the GitHub Security tab. See the [action README](https://github.com/oxvault/scan-action) for full options.
 
 ## Development
 

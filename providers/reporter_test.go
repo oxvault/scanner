@@ -850,6 +850,7 @@ func TestReport_SARIF_NoCWE_NoProperties(t *testing.T) {
 			Rule:     "mcp-test",
 			Severity: SeverityCritical,
 			Message:  "no cwe here",
+			// Confidence is zero (not set) → properties must be nil
 		},
 	}
 	out, err := r.Report(findings, FormatSARIF)
@@ -867,7 +868,194 @@ func TestReport_SARIF_NoCWE_NoProperties(t *testing.T) {
 	}
 	result := report.Runs[0].Results[0]
 	if result.Properties != nil {
-		t.Errorf("expected no properties when CWE is empty, got: %+v", result.Properties)
+		t.Errorf("expected no properties when CWE is empty and confidence is zero, got: %+v", result.Properties)
+	}
+}
+
+// ── Confidence in terminal output ─────────────────────────────────────────────
+
+func TestWriteFinding_ConfidenceLabel_InOutput(t *testing.T) {
+	color.NoColor = true
+	defer func() { color.NoColor = false }()
+
+	tests := []struct {
+		name       string
+		confidence Confidence
+		wantLabel  string
+	}{
+		{"high", ConfidenceHigh, "[high]"},
+		{"medium", ConfidenceMedium, "[medium]"},
+		{"low", ConfidenceLow, "[low]"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var b strings.Builder
+			f := Finding{
+				Rule:       "mcp-test",
+				Severity:   SeverityCritical,
+				Confidence: tt.confidence,
+				Message:    "test message",
+			}
+			writeFinding(&b, f)
+			out := b.String()
+			if !strings.Contains(out, tt.wantLabel) {
+				t.Errorf("expected %q in writeFinding output, got: %s", tt.wantLabel, out)
+			}
+		})
+	}
+}
+
+func TestReport_Terminal_ConfidenceVisible(t *testing.T) {
+	r := newReporter(t)
+	findings := []Finding{
+		{
+			Rule:       "mcp-cmd-injection",
+			Severity:   SeverityCritical,
+			Confidence: ConfidenceHigh,
+			Message:    "Direct OS command execution",
+		},
+	}
+	out, err := r.Report(findings, FormatTerminal)
+	if err != nil {
+		t.Fatalf("Report() error: %v", err)
+	}
+	if !strings.Contains(string(out), "[high]") {
+		t.Errorf("expected '[high]' confidence label in terminal output, got: %s", out)
+	}
+}
+
+// ── Confidence in SARIF properties ────────────────────────────────────────────
+
+type sarifResultWithConfidence struct {
+	RuleID  string `json:"ruleId"`
+	Level   string `json:"level"`
+	Message struct {
+		Text string `json:"text"`
+	} `json:"message"`
+	Properties *struct {
+		CWE        string `json:"cwe"`
+		Confidence string `json:"confidence"`
+	} `json:"properties"`
+}
+
+type sarifReportWithConfidence struct {
+	Runs []struct {
+		Results []sarifResultWithConfidence `json:"results"`
+	} `json:"runs"`
+}
+
+func TestReport_SARIF_Confidence_InProperties(t *testing.T) {
+	r := newReporter(t)
+	findings := []Finding{
+		{
+			Rule:            "mcp-cmd-injection",
+			Severity:        SeverityCritical,
+			Confidence:      ConfidenceHigh,
+			ConfidenceLabel: ConfidenceHigh.String(),
+			Message:         "Direct OS command execution",
+			CWE:             "CWE-78",
+		},
+	}
+	out, err := r.Report(findings, FormatSARIF)
+	if err != nil {
+		t.Fatalf("Report() SARIF error: %v", err)
+	}
+
+	var report sarifReportWithConfidence
+	if err := json.Unmarshal(out, &report); err != nil {
+		t.Fatalf("SARIF output is not valid JSON: %v", err)
+	}
+
+	if len(report.Runs) == 0 || len(report.Runs[0].Results) == 0 {
+		t.Fatal("expected at least one SARIF result")
+	}
+	result := report.Runs[0].Results[0]
+	if result.Properties == nil {
+		t.Fatal("expected properties object in SARIF result")
+	}
+	if result.Properties.Confidence != "high" {
+		t.Errorf("expected properties.confidence = 'high', got %q", result.Properties.Confidence)
+	}
+	if result.Properties.CWE != "CWE-78" {
+		t.Errorf("expected properties.cwe = 'CWE-78', got %q", result.Properties.CWE)
+	}
+}
+
+func TestReport_SARIF_Confidence_OnlyConfidenceNoProperties(t *testing.T) {
+	r := newReporter(t)
+	// Finding with confidence but no CWE — properties should still appear
+	findings := []Finding{
+		{
+			Rule:            "mcp-test",
+			Severity:        SeverityHigh,
+			Confidence:      ConfidenceMedium,
+			ConfidenceLabel: ConfidenceMedium.String(),
+			Message:         "test",
+			// no CWE
+		},
+	}
+	out, err := r.Report(findings, FormatSARIF)
+	if err != nil {
+		t.Fatalf("Report() SARIF error: %v", err)
+	}
+
+	var report sarifReportWithConfidence
+	if err := json.Unmarshal(out, &report); err != nil {
+		t.Fatalf("SARIF output is not valid JSON: %v", err)
+	}
+
+	result := report.Runs[0].Results[0]
+	if result.Properties == nil {
+		t.Fatal("expected properties when confidence is set")
+	}
+	if result.Properties.Confidence != "medium" {
+		t.Errorf("expected properties.confidence = 'medium', got %q", result.Properties.Confidence)
+	}
+}
+
+// ── JSON output confidence fields ─────────────────────────────────────────────
+
+func TestReport_JSON_ConfidenceFields(t *testing.T) {
+	r := newReporter(t)
+	findings := []Finding{
+		{
+			Rule:            "mcp-cmd-injection",
+			Severity:        SeverityCritical,
+			Confidence:      ConfidenceHigh,
+			ConfidenceLabel: ConfidenceHigh.String(),
+			Message:         "Direct OS command execution",
+		},
+	}
+	out, err := r.Report(findings, FormatJSON)
+	if err != nil {
+		t.Fatalf("Report() JSON error: %v", err)
+	}
+
+	var results []map[string]any
+	if err := json.Unmarshal(out, &results); err != nil {
+		t.Fatalf("json.Unmarshal error: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected at least one JSON result")
+	}
+
+	result := results[0]
+
+	conf, ok := result["confidence"].(float64)
+	if !ok {
+		t.Fatalf("confidence field missing or wrong type in JSON output")
+	}
+	if int(conf) != int(ConfidenceHigh) {
+		t.Errorf("confidence = %v, want %d", conf, ConfidenceHigh)
+	}
+
+	label, ok := result["confidenceLabel"].(string)
+	if !ok {
+		t.Fatalf("confidenceLabel field missing or wrong type in JSON output")
+	}
+	if label != "high" {
+		t.Errorf("confidenceLabel = %q, want %q", label, "high")
 	}
 }
 
