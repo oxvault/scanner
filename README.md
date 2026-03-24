@@ -207,6 +207,26 @@ $ oxvault scan --config auto
     sarif_file: results.sarif
 ```
 
+### Filter by confidence
+
+Every finding includes a confidence level — **high**, **medium**, or **low**. Use `--min-confidence` to filter noise:
+
+```bash
+# Only show high-confidence findings (definite vulnerabilities)
+$ oxvault scan ./server --min-confidence=high
+
+  ✗ CRITICAL [high] mcp-cmd-injection (CWE-78)
+    server.py:24 — os.popen(f"curl {user_input}")
+
+  1 CRITICAL · 0 HIGH · 0 WARNING · 0 INFO
+```
+
+| Confidence | Meaning | Examples |
+|---|---|---|
+| **high** | Almost certainly a real vulnerability | `os.popen()` with user input, hardcoded AWS keys, `pickle.load()`, tool poisoning with credential paths |
+| **medium** | Likely real, needs verification | `subprocess.Popen()`, `eval()`, `exec.Command`, path traversal |
+| **low** | Informational, may be false positive | Env var reads, temp dir cleanup, bare imports, SSRF risk patterns |
+
 ## All CLI Options
 
 ```bash
@@ -215,6 +235,7 @@ oxvault scan <target>                    # Local path, npm package, or github:us
 oxvault scan --config <path|auto>        # Scan all servers from MCP config files
 oxvault scan --format <terminal|sarif|json>
 oxvault scan --fail-on <critical|high|warning|info>
+oxvault scan --min-confidence <high|medium|low>  # Filter by confidence (default: low)
 oxvault scan --skip-sast                 # Skip source code analysis
 oxvault scan --skip-manifest             # Skip MCP connection + tool description scan
 oxvault scan --skip-egress               # Skip network egress detection
@@ -232,22 +253,22 @@ oxvault check <command> [args...]         # Compare against saved hashes
 | Metric | Result |
 |---|---|
 | **CVE detection rate** | [12/12 (100%)](testdata/cve/) - validated against real MCP CVEs |
-| **Real-world scan** | [67 servers scanned, 67% had findings, 546 actionable](#real-world-scan-results) |
+| **Real-world scan** | [117 servers scanned, 72% had findings, 1,150 actionable](#real-world-scan-results) |
 | **False positive rate** | [0% across 10 official MCP servers](benchmarks/false-positives/RESULTS.md) |
 | **DVMCP challenge detection** | [31 findings across 8/10 challenges](benchmarks/competitive/RESULTS.md) |
 | **vs. competitors** | [Feature comparison with mcp-scan, Snyk, Enkrypt, Cisco](benchmarks/competitive/RESULTS.md) |
 
 ## Real-World Scan Results
 
-We scanned **67 real MCP servers** from the ecosystem -including official, enterprise, and community servers. Results:
+We scanned **117 real MCP servers** from the ecosystem — including official, enterprise, and community servers. Results:
 
 | Metric | Result |
 |---|---|
-| **Servers scanned** | 67 (GitHub, Stripe, AWS, Cloudflare, Microsoft, Supabase, Neon, Grafana, etc.) |
-| **Vulnerability rate** | 67% of servers had security findings |
-| **Actionable findings** | 546 HIGH + CRITICAL across all servers |
-| **Critical findings** | 179 (command injection, hardcoded secrets, code eval) |
-| **Clean servers** | 22 (33%) |
+| **Servers scanned** | 117 (GitHub, Stripe, AWS, Cloudflare, Microsoft, Supabase, Neon, Grafana, etc.) |
+| **Vulnerability rate** | 72% of servers had security findings |
+| **Actionable findings** | 1,150 HIGH + CRITICAL across all servers |
+| **Critical findings** | 347 (command injection, hardcoded secrets, code eval) |
+| **Clean servers** | 32 (28%) |
 
 ### Notable findings on real servers
 
