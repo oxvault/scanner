@@ -3,6 +3,8 @@ package providers
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -240,6 +242,20 @@ func (r *reporter) reportJSON(findings []Finding) ([]byte, error) {
 	return json.MarshalIndent(findings, "", "  ")
 }
 
+// toRelativePath converts an absolute file path to a path relative to cwd.
+// If the path is already relative, or if filepath.Rel returns an error, the
+// original path is returned unchanged.
+func toRelativePath(cwd, path string) string {
+	if !filepath.IsAbs(path) {
+		return path
+	}
+	rel, err := filepath.Rel(cwd, path)
+	if err != nil {
+		return path
+	}
+	return rel
+}
+
 // SARIF 2.1.0 output for CI/CD integration
 func (r *reporter) reportSARIF(findings []Finding) ([]byte, error) {
 	type sarifMessage struct {
@@ -280,6 +296,11 @@ func (r *reporter) reportSARIF(findings []Finding) ([]byte, error) {
 		Runs    []sarifRun `json:"runs"`
 	}
 
+	cwd, err := os.Getwd()
+	if err != nil {
+		cwd = ""
+	}
+
 	var results []sarifResult
 	for _, f := range findings {
 		result := sarifResult{
@@ -300,7 +321,7 @@ func (r *reporter) reportSARIF(findings []Finding) ([]byte, error) {
 					StartLine int `json:"startLine"`
 				} `json:"region,omitempty"`
 			}{}
-			loc.PhysicalLocation.ArtifactLocation.URI = f.File
+			loc.PhysicalLocation.ArtifactLocation.URI = toRelativePath(cwd, f.File)
 			if f.Line > 0 {
 				loc.PhysicalLocation.Region = &struct {
 					StartLine int `json:"startLine"`
