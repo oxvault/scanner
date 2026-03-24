@@ -116,7 +116,7 @@ func (c *mcpClient) Connect(cmd string, args []string) (*MCPSession, error) {
 		ServerInfo MCPServerInfo `json:"serverInfo"`
 	}
 	if err := json.Unmarshal(initResp.Result, &initResult); err != nil {
-		proc.Process.Kill()
+		_ = proc.Process.Kill()
 		return nil, fmt.Errorf("parse server info: %w", err)
 	}
 
@@ -126,7 +126,7 @@ func (c *mcpClient) Connect(cmd string, args []string) (*MCPSession, error) {
 		Method:  "notifications/initialized",
 	}
 	if err := encoder.Encode(notif); err != nil {
-		proc.Process.Kill()
+		_ = proc.Process.Kill()
 		return nil, fmt.Errorf("send initialized: %w", err)
 	}
 
