@@ -1,0 +1,11 @@
+version: 2
+updates:
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # Intentionally vulnerable examples — do not update
+  - package-ecosystem: "npm"
+    directory: "/examples"
+    open-pull-requests-limit: 0
