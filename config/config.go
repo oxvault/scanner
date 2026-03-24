@@ -13,6 +13,7 @@ type Config struct {
 	OutputFormat providers.OutputFormat
 	FailOn       string // Severity threshold for non-zero exit: critical, high, warning, info
 	Verbose      bool
+	NoColor      bool // Disable ANSI color output (for CI / pipe-friendly output)
 
 	// Paths
 	PinDir string // Directory for pin storage (default: .oxvault/)

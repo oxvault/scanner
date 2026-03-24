@@ -5,7 +5,65 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/fatih/color"
 )
+
+// Color and style definitions — declared as package-level vars so tests can
+// call color.NoColor = true before constructing a reporter and get plain text.
+var (
+	colorCritical = color.New(color.FgRed, color.Bold)
+	colorHigh     = color.New(color.FgYellow, color.Bold)
+	colorWarning  = color.New(color.FgMagenta)
+	colorInfo     = color.New(color.FgCyan)
+	colorPass     = color.New(color.FgGreen)
+	colorDim      = color.New(color.Faint)
+	colorBold     = color.New(color.Bold)
+	colorHeader   = color.New(color.Bold)
+	colorFix      = color.New(color.FgGreen, color.Faint)
+)
+
+// severityIcon maps a Severity to its Unicode icon.
+func severityIcon(s Severity) string {
+	switch s {
+	case SeverityCritical:
+		return colorCritical.Sprint("✗")
+	case SeverityHigh:
+		return colorHigh.Sprint("⚠")
+	case SeverityWarning:
+		return colorWarning.Sprint("●")
+	case SeverityInfo:
+		return colorInfo.Sprint("ℹ")
+	default:
+		return "·"
+	}
+}
+
+// severityLabel returns a colored, fixed-width severity badge.
+func severityLabel(s Severity) string {
+	switch s {
+	case SeverityCritical:
+		return colorCritical.Sprintf("%-8s", "CRITICAL")
+	case SeverityHigh:
+		return colorHigh.Sprintf("%-8s", "HIGH")
+	case SeverityWarning:
+		return colorWarning.Sprintf("%-8s", "WARNING")
+	case SeverityInfo:
+		return colorInfo.Sprintf("%-8s", "INFO")
+	default:
+		return fmt.Sprintf("%-8s", s.String())
+	}
+}
+
+// sectionDivider renders a colored section header line.
+// e.g. "  ── Source Code ──────────────────────────────────────────"
+func sectionDivider(title string) string {
+	const totalWidth = 60
+	prefix := "  ── "
+	suffix := " "
+	fill := strings.Repeat("─", totalWidth-len(prefix)-len(title)-len(suffix))
+	return colorHeader.Sprintf("%s%s%s%s", prefix, title, suffix, fill)
+}
 
 type reporter struct{}
 
@@ -28,7 +86,8 @@ func (r *reporter) Report(findings []Finding, format OutputFormat) ([]byte, erro
 
 func (r *reporter) reportTerminal(findings []Finding) ([]byte, error) {
 	if len(findings) == 0 {
-		return []byte("\n  ✓ No security findings.\n\n"), nil
+		line := fmt.Sprintf("\n  %s No security findings.\n\n", colorPass.Sprint("✓"))
+		return []byte(line), nil
 	}
 
 	// Sort by severity (critical first)
@@ -36,7 +95,6 @@ func (r *reporter) reportTerminal(findings []Finding) ([]byte, error) {
 		return findings[i].Severity > findings[j].Severity
 	})
 
-	// Group by category
 	var b strings.Builder
 
 	// Count by severity
@@ -45,7 +103,7 @@ func (r *reporter) reportTerminal(findings []Finding) ([]byte, error) {
 		counts[f.Severity]++
 	}
 
-	// Source code findings
+	// Group by category
 	var sourceFindings, descFindings, credFindings, otherFindings []Finding
 	for _, f := range findings {
 		switch {
@@ -65,62 +123,101 @@ func (r *reporter) reportTerminal(findings []Finding) ([]byte, error) {
 	}
 
 	if len(sourceFindings) > 0 {
-		b.WriteString("\n  ── Source Code Analysis ──────────────────────────────────\n\n")
+		b.WriteString("\n")
+		b.WriteString(sectionDivider("Source Code Analysis"))
+		b.WriteString("\n\n")
 		for _, f := range sourceFindings {
 			writeFinding(&b, f)
 		}
 	}
 
 	if len(descFindings) > 0 {
-		b.WriteString("\n  ── Tool Description Analysis ─────────────────────────────\n\n")
+		b.WriteString("\n")
+		b.WriteString(sectionDivider("Tool Description Analysis"))
+		b.WriteString("\n\n")
 		for _, f := range descFindings {
 			writeFinding(&b, f)
 		}
 	}
 
 	if len(credFindings) > 0 {
-		b.WriteString("\n  ── Credential Analysis ───────────────────────────────────\n\n")
+		b.WriteString("\n")
+		b.WriteString(sectionDivider("Credential Analysis"))
+		b.WriteString("\n\n")
 		for _, f := range credFindings {
 			writeFinding(&b, f)
 		}
 	}
 
 	if len(otherFindings) > 0 {
-		b.WriteString("\n  ── Other Findings ────────────────────────────────────────\n\n")
+		b.WriteString("\n")
+		b.WriteString(sectionDivider("Other Findings"))
+		b.WriteString("\n\n")
 		for _, f := range otherFindings {
 			writeFinding(&b, f)
 		}
 	}
 
-	// Summary
-	b.WriteString("\n  ── Summary ───────────────────────────────────────────────\n\n")
-	b.WriteString(fmt.Sprintf("  %d CRITICAL · %d HIGH · %d WARNING · %d INFO\n\n",
-		counts[SeverityCritical], counts[SeverityHigh], counts[SeverityWarning], counts[SeverityInfo]))
+	// Summary section
+	b.WriteString("\n")
+	b.WriteString(sectionDivider("Summary"))
+	b.WriteString("\n\n")
+
+	summaryParts := []string{
+		colorCritical.Sprintf("%d CRITICAL", counts[SeverityCritical]),
+		colorHigh.Sprintf("%d HIGH", counts[SeverityHigh]),
+		colorWarning.Sprintf("%d WARNING", counts[SeverityWarning]),
+		colorInfo.Sprintf("%d INFO", counts[SeverityInfo]),
+	}
+	b.WriteString("  " + strings.Join(summaryParts, colorDim.Sprint(" · ")) + "\n\n")
 
 	if counts[SeverityCritical] > 0 || counts[SeverityHigh] > 0 {
-		b.WriteString("  This server is NOT SAFE to install.\n\n")
+		fmt.Fprintf(&b, "  %s %s\n\n",
+			colorCritical.Sprint("✗"),
+			colorCritical.Sprint("This server is NOT SAFE to install."))
 	} else if counts[SeverityWarning] > 0 {
-		b.WriteString("  Review warnings before installing.\n\n")
+		fmt.Fprintf(&b, "  %s %s\n\n",
+			colorWarning.Sprint("●"),
+			colorWarning.Sprint("Review warnings before installing."))
 	} else {
-		b.WriteString("  No critical issues found.\n\n")
+		fmt.Fprintf(&b, "  %s %s\n\n",
+			colorPass.Sprint("✓"),
+			colorPass.Sprint("No critical issues found."))
 	}
 
 	return []byte(b.String()), nil
 }
 
+// writeFinding writes a single colored finding block to the builder.
 func writeFinding(b *strings.Builder, f Finding) {
-	b.WriteString(fmt.Sprintf("  %-8s  %s\n", f.Severity, f.Rule))
+	// Icon + severity badge + rule name
+	icon := severityIcon(f.Severity)
+	badge := severityLabel(f.Severity)
+	rule := colorBold.Sprint(f.Rule)
+	fmt.Fprintf(b, "  %s %s %s\n", icon, badge, rule)
+
+	// File location
 	if f.File != "" {
 		if f.Line > 0 {
-			b.WriteString(fmt.Sprintf("  %s:%d\n", f.File, f.Line))
+			fmt.Fprintf(b, "    %s\n", colorDim.Sprintf("%s:%d", f.File, f.Line))
 		} else {
-			b.WriteString(fmt.Sprintf("  %s\n", f.File))
+			fmt.Fprintf(b, "    %s\n", colorDim.Sprint(f.File))
 		}
 	}
-	b.WriteString(fmt.Sprintf("  %s\n", f.Message))
-	if f.Fix != "" {
-		b.WriteString(fmt.Sprintf("  Fix: %s\n", f.Fix))
+
+	// Tool name (for description findings)
+	if f.Tool != "" && f.File == "" {
+		fmt.Fprintf(b, "    %s\n", colorDim.Sprintf("Tool: %s", f.Tool))
 	}
+
+	// Message
+	fmt.Fprintf(b, "    %s\n", f.Message)
+
+	// Fix hint
+	if f.Fix != "" {
+		fmt.Fprintf(b, "    %s %s\n", colorFix.Sprint("Fix:"), colorFix.Sprint(f.Fix))
+	}
+
 	b.WriteString("\n")
 }
 

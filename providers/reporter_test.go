@@ -4,12 +4,17 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/fatih/color"
 )
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 func newReporter(t *testing.T) Reporter {
 	t.Helper()
+	// Disable ANSI color codes so string matching works regardless of terminal.
+	color.NoColor = true
+	t.Cleanup(func() { color.NoColor = false })
 	return NewReporter()
 }
 
