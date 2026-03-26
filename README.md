@@ -10,16 +10,16 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue)](LICENSE)
 [![CI](https://github.com/oxvault/scanner/actions/workflows/go-test.yml/badge.svg)](https://github.com/oxvault/scanner/actions/workflows/go-test.yml)
 [![CVE Detection](https://img.shields.io/badge/CVE_Detection-12%2F12-brightgreen)](testdata/cve/)
-[![FP Rate](https://img.shields.io/badge/False_Positive_Rate-0%25-brightgreen)](benchmarks/false-positives/RESULTS.md)
+[![FP Rate](https://img.shields.io/badge/FP_Rate-Reduced_v0.3.1-brightgreen)](benchmarks/false-positives/RESULTS.md)
 [![Discord](https://img.shields.io/discord/1353688988539187200?color=7289da&label=Discord&logo=discord&logoColor=white)](https://discord.gg/mysvyvHCX5)
 
 </div>
 
 ---
 
-MCP (Model Context Protocol) is the standard for connecting AI agents (Claude, GPT, Copilot, Cursor) to external tools. **72% of MCP servers have security vulnerabilities.** Oxvault catches them before installation.
+MCP (Model Context Protocol) is the standard for connecting AI agents (Claude, GPT, Copilot, Cursor) to external tools. **82% of MCP servers have security vulnerabilities.** Oxvault catches them before installation.
 
-**117 real servers scanned** | **72% had findings** | **1,150 actionable vulnerabilities** | **12/12 CVEs detected** | **0% false positives**
+**67 real servers scanned** | **82% had findings** | **1,362 total findings** | **12/12 CVEs detected**
 
 ```bash
 go install github.com/oxvault/scanner/cmd@latest
@@ -34,7 +34,7 @@ oxvault scan github:user/mcp-server
 - [Quick Start](#quick-start) - install and scan in seconds
 - [Examples](#examples) - scan output, rug pulls, install hooks, CI/CD, confidence filtering
 - [CLI Options](#all-cli-options) - all flags and commands
-- [Real-World Results](#real-world-scan-results) - 117 servers scanned, notable findings
+- [Real-World Results](#real-world-scan-results) - 67 servers scanned, notable findings
 - [Benchmarks](#benchmarks) - CVE detection, false positive rate, competitive comparison
 - [GitHub Action](#github-action) - `oxvault/scan-action@v1` for CI/CD
 - [Community](#community) - Discord, issues, contributing
@@ -44,7 +44,7 @@ oxvault scan github:user/mcp-server
 ## Why Oxvault
 
 - **12/12 known MCP CVEs detected** - [validated against real vulnerabilities](testdata/cve/)
-- **117 servers scanned, 72% had findings** - [real-world validation](#real-world-scan-results)
+- **67 servers scanned, 82% had findings** - [real-world validation](#real-world-scan-results)
 - **Confidence scoring** - every finding rated high/medium/low, filter with `--min-confidence`
 - **Single binary, zero dependencies** - install and run in seconds
 - **CWE references on every finding** - enterprise-grade reporting
@@ -276,35 +276,37 @@ oxvault check <command> [args...]         # Compare against saved hashes
 | Metric | Result |
 |---|---|
 | **CVE detection rate** | [12/12 (100%)](testdata/cve/) - validated against real MCP CVEs |
-| **Real-world scan** | [117 servers scanned, 72% had findings, 1,150 actionable](#real-world-scan-results) |
-| **False positive rate** | [0% across 10 official MCP servers](benchmarks/false-positives/RESULTS.md) |
+| **Real-world scan** | [67 servers scanned, 82% had findings, 1,362 total findings](#real-world-scan-results) |
+| **False positive rate** | [Significantly reduced in v0.3.1](benchmarks/false-positives/RESULTS.md) |
 | **DVMCP challenge detection** | [31 findings across 8/10 challenges](benchmarks/competitive/RESULTS.md) |
 | **vs. competitors** | [Feature comparison with mcp-scan, Snyk, Enkrypt, Cisco](benchmarks/competitive/RESULTS.md) |
 
 ## Real-World Scan Results
 
-We scanned **117 real MCP servers** from the ecosystem - including official, enterprise, and community servers. Results:
+We scanned **67 real MCP servers** from the ecosystem — including official, enterprise, and community servers — using v0.3.1. 4 servers were unavailable at scan time (Datadog, DuckDB, Linear, Shopify). Results:
 
 | Metric | Result |
 |---|---|
-| **Servers scanned** | 117 (GitHub, Stripe, AWS, Cloudflare, Microsoft, Supabase, Neon, Grafana, etc.) |
-| **Vulnerability rate** | 72% of servers had security findings |
-| **Actionable findings** | 1,150 HIGH + CRITICAL across all servers |
-| **Critical findings** | 347 (command injection, hardcoded secrets, code eval) |
-| **Clean servers** | 32 (28%) |
+| **Servers scanned** | 67 (GitHub, Stripe, AWS, Cloudflare, Microsoft, Supabase, Neon, Grafana, etc.) |
+| **Vulnerability rate** | 82% of servers had security findings (55/67) |
+| **Total findings** | 1,362 (58 CRITICAL · 179 HIGH · 378 WARNING · 747 INFO) |
+| **Clean servers** | 8 (Playwright, PostgreSQL, E2B, Neon, Docker, Qdrant, Stripe, Neon Labs) |
 
 ### Notable findings on real servers
 
-| Server | Findings | What was found |
+| Server | Severity | What was found |
 |---|---|---|
-| **Pipedream** (`PipedreamHQ/pipedream`) | 179 HIGH+CRIT | `eval()` on user content, path traversal |
-| **AWS MCP** (`awslabs/mcp`) | 53 HIGH+CRIT | `exec()` calls, `os.system()`, `pickle.load()` |
-| **Anyquery** (`julien040/anyquery`) | 35 HIGH+CRIT | `os.RemoveAll()`, `exec.Command` with user args |
-| **DVMCP** (`harishsg993010/damn-vulnerable-MCP-server`) | 27 HIGH+CRIT | Command injection (`shell=True`), hardcoded API keys |
-| **Apify** (`apify/actors-mcp-server`) | 9 HIGH+CRIT | `execSync` with template literals, hardcoded keys |
-| **Official MCP servers** (`modelcontextprotocol/servers`) | 8 HIGH+CRIT | `startsWith()` path check (CVE-2025-53110 pattern) |
-| **Postman** (`postmanlabs/postman-mcp-server`) | 5 HIGH+CRIT | `execSync` with string concatenation |
-| **Cloudflare** (`cloudflare/mcp-server-cloudflare`) | 2 HIGH+CRIT | Hardcoded bearer token, recursive `fs.rm()` |
+| **Figma MCP** | CRITICAL | `execSync` with unsanitized user input — direct command injection |
+| **Cloudflare MCP** | CRITICAL | Hardcoded Bearer token in source |
+| **AWS MCP** (`awslabs/mcp`) | CRITICAL | `os.system()`, `os.popen()`, unsafe `yaml.load()` |
+| **Context7 MCP** | CRITICAL | SSRF bypass — `startsWith()` IP check on full URL instead of hostname |
+| **Desktop Commander** | HIGH | Install hook phones home to Google Analytics during `npm install` |
+| **Apify** (`apify/actors-mcp-server`) | CRITICAL | Real API keys hardcoded in source |
+| **3 servers** | CRITICAL | CVE-2025-49596 — Node.js inspector RCE via `--inspect` flag (CVSS 9.4) |
+
+### Clean servers (confirmed safe in v0.3.1)
+
+Playwright, PostgreSQL (official), E2B, Neon, Docker, Qdrant, Stripe, Neon Labs — zero findings across all detection categories.
 
 *Run your own scan: `oxvault scan github:owner/repo`*
 
