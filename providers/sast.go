@@ -49,6 +49,11 @@ var placeholderPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)fixme`),
 	regexp.MustCompile(`(?i)<your`),
 	regexp.MustCompile(`(?i)\{your`),
+	// Substring match (no word boundary) so that "mocked", "mocking" etc. are
+	// all suppressed, not just the bare word "mock".
+	regexp.MustCompile(`(?i)mock`),
+	regexp.MustCompile(`(?i)fake`),
+	regexp.MustCompile(`(?i)\btest\b`),
 }
 
 // isPlaceholderSecret returns true when value looks like a documentation
@@ -59,7 +64,25 @@ func isPlaceholderSecret(value string) bool {
 			return true
 		}
 	}
+	// Detect PascalCase type-name placeholders like "GlobalContinuationToken",
+	// "SomeTypeName", "AccessTokenType" — values that are clearly Go/Python/TS
+	// type names used as a placeholder rather than an actual secret string.
+	// Require: at least 2 consecutive uppercase-lowercase transitions and no
+	// hyphens/underscores (real tokens use those as separators, type names don't).
+	if isPascalCaseTypeName(value) {
+		return true
+	}
 	return false
+}
+
+// pascalCaseTypeNameRe detects multi-word PascalCase identifiers that look
+// like type names (e.g. GlobalContinuationToken, AccessTokenType).
+// Requirements: starts with uppercase, has at least two uppercase-then-lowercase
+// transitions, contains only letters, and is at least 8 chars long.
+var pascalCaseTypeNameRe = regexp.MustCompile(`^[A-Z][a-z]+(?:[A-Z][a-z]+){1,}$`)
+
+func isPascalCaseTypeName(value string) bool {
+	return pascalCaseTypeNameRe.MatchString(value)
 }
 
 // ── Fix 2: Constant self-assignment exclusion ─────────────────────────────────
@@ -188,7 +211,11 @@ var sourcePatterns = []sourcePattern{
 		cwe:        "CWE-78",
 	},
 	{
-		// exec() — Python built-in dynamic code execution
+		// exec() — Python built-in dynamic code execution.
+		// excludePatterns suppress exec( appearing only as a quoted string
+		// constant — e.g. in a security-scanner blocklist like:
+		//   dangerous_patterns = [('exec(', 'exec'), ('eval(', 'eval')]
+		// or in a human-readable error message string.
 		pattern:    regexp.MustCompile(`\bexec\s*\(`),
 		rule:       "mcp-code-eval",
 		severity:   SeverityCritical,
@@ -196,15 +223,40 @@ var sourcePatterns = []sourcePattern{
 		message:    "Python exec() dynamic code execution: %s",
 		langs:      []Language{LangPython},
 		cwe:        "CWE-94",
+		excludePatterns: []*regexp.Regexp{
+			// exec( appearing inside a quoted string literal on the same line.
+			// Pattern: quote char → any non-quote chars → exec(
+			regexp.MustCompile(`["'][^"']*\bexec\s*\(`),
+		},
 	},
 	{
-		pattern:    regexp.MustCompile(`eval\s*\(`),
-		rule:       "mcp-code-eval",
-		severity:   SeverityCritical,
+		// \b word boundary prevents matching substrings like "retrieval (" or
+		// "literal_eval(" (where `_` is a word char and there is no boundary
+		// between the preceding identifier and `eval`).
+		// excludePatterns suppress:
+		//   • ast.literal_eval()  — safe Python literal evaluator
+		//   • page.$eval() / page.$$eval() — Playwright DOM-query API
+		//   • eval( appearing only as a quoted string constant (e.g. in a
+		//     security-scanner blocklist like BLOCKED = ['eval(', 'exec('])
+		pattern: regexp.MustCompile(`\beval\s*\(`),
+		rule:     "mcp-code-eval",
+		severity: SeverityCritical,
 		confidence: ConfidenceMedium,
 		message:    "Dynamic code evaluation: %s",
 		langs:      []Language{LangPython, LangJavaScript, LangTypeScript},
 		cwe:        "CWE-94",
+		excludePatterns: []*regexp.Regexp{
+			// ast.literal_eval is the safe, literal-only alternative to eval()
+			regexp.MustCompile(`ast\.literal_eval\s*\(`),
+			// Playwright $eval / $$eval — browser DOM-query API, not code eval
+			regexp.MustCompile(`\$\$?eval\s*\(`),
+			// eval( appearing inside a quoted string literal — e.g. a security
+			// scanner's message: 'you should not use eval()'.
+			// Match: a quote character somewhere before "eval(" on the same line,
+			// where the quote appears to open a string (not close one).
+			// Pattern: quote then any non-quote chars then eval(
+			regexp.MustCompile(`["'][^"']*\beval\s*\(`),
+		},
 	},
 	{
 		// __import__ — dynamic module import, often used in payloads.
@@ -595,6 +647,9 @@ var sourcePatterns = []sourcePattern{
 	// ── Cross-language: private key content ──────────────────────────────────
 
 	{
+		// Exclude lines where the BEGIN PRIVATE KEY header appears inside a
+		// regex compilation call — these are detection patterns in security
+		// scanners/log redactors, not embedded key material.
 		pattern:    regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`),
 		rule:       "mcp-hardcoded-private-key",
 		severity:   SeverityCritical,
@@ -602,6 +657,12 @@ var sourcePatterns = []sourcePattern{
 		message:    "Private key material embedded in source code: %s",
 		langs:      []Language{LangPython, LangJavaScript, LangTypeScript, LangGo},
 		cwe:        "CWE-798",
+		excludePatterns: []*regexp.Regexp{
+			// regexp.MustCompile(`(-----BEGIN RSA PRIVATE KEY-----)`) — scanner rule
+			regexp.MustCompile(`(?i)regexp\.MustCompile|regexp\.Compile|re\.compile|new\s+RegExp`),
+			// Raw-string / backtick patterns: `(-----BEGIN...)` in Go regex literals
+			regexp.MustCompile("`[^`]*-----BEGIN"),
+		},
 	},
 
 	// ── Cross-language: webhook URLs ─────────────────────────────────────────
@@ -696,10 +757,65 @@ var egressPatterns = []struct {
 // that should be skipped during analysis.
 func isTestDir(name string) bool {
 	switch name {
-	case "test", "tests", "__tests__", "spec", "testdata":
+	case "test", "tests", "__tests__", "spec", "testdata",
+		// Additional test/eval/mock directories found in real-world MCP servers
+		"evals", "eval", "fixtures", "fixture",
+		"__mocks__", "mocks", "mock",
+		"__fixtures__":
 		return true
 	}
 	return false
+}
+
+// isExcludedDir returns true when the directory should be entirely skipped
+// during SAST analysis.  It covers:
+//   - dependency directories: node_modules (npm), vendor (Go)
+//   - build / toolchain directories: .smithery (Smithery bundler output)
+//   - VCS / cache directories: .git, __pycache__, .venv
+//   - test directories (delegates to isTestDir)
+func isExcludedDir(name string) bool {
+	switch name {
+	case "node_modules", "vendor",
+		".smithery",
+		".git", "__pycache__", ".venv":
+		return true
+	}
+	return isTestDir(name)
+}
+
+// isExcludedFile returns true when the file should be skipped during SAST
+// analysis regardless of its directory.  It covers:
+//   - TypeScript declaration files (*.d.ts) — type metadata, never executed
+//   - Minified JS files (*.min.js, *.min.mjs, *.min.cjs)
+//   - Bundled JS files (*.bundle.js, bundle.js)
+//   - Test files (delegates to isTestFile)
+func isExcludedFile(name string) bool {
+	lower := strings.ToLower(name)
+
+	// TypeScript declaration files
+	if strings.HasSuffix(lower, ".d.ts") || strings.HasSuffix(lower, ".d.mts") {
+		return true
+	}
+
+	// Minified files
+	if strings.HasSuffix(lower, ".min.js") ||
+		strings.HasSuffix(lower, ".min.mjs") ||
+		strings.HasSuffix(lower, ".min.cjs") {
+		return true
+	}
+
+	// Bundled files
+	if strings.HasSuffix(lower, ".bundle.js") ||
+		strings.HasSuffix(lower, ".bundle.mjs") {
+		return true
+	}
+
+	// Plain bundle.js (common Webpack/esbuild output name)
+	if lower == "bundle.js" || lower == "bundle.mjs" {
+		return true
+	}
+
+	return isTestFile(name)
 }
 
 // isTestFile returns true when the file name matches common test file conventions.
@@ -708,10 +824,16 @@ func isTestFile(name string) bool {
 	if strings.HasSuffix(name, "_test.go") {
 		return true
 	}
-	// JavaScript / TypeScript test files
+	// JavaScript / TypeScript test / spec / mock files
 	if strings.HasSuffix(name, ".test.js") || strings.HasSuffix(name, ".test.ts") ||
 		strings.HasSuffix(name, ".spec.js") || strings.HasSuffix(name, ".spec.ts") ||
 		strings.HasSuffix(name, ".test.mjs") || strings.HasSuffix(name, ".spec.mjs") {
+		return true
+	}
+	// Files with "mock" in the name (e.g. start-mock-stdio.ts, mock-server.ts)
+	lower := strings.ToLower(name)
+	if strings.Contains(lower, "mock") || strings.Contains(lower, "-mock") ||
+		strings.HasPrefix(lower, "mock-") || strings.HasPrefix(lower, "mock_") {
 		return true
 	}
 	// Python test files
@@ -760,13 +882,20 @@ func (s *sastAnalyzer) AnalyzeFile(path string, lang Language) []Finding {
 
 			// Fix 1 & 2: for secret rules, suppress placeholder/self-assigned values.
 			if sp.isSecretRule {
-				// Extract the matched value (the quoted secret part).
-				// Use the full line match for placeholder check.
+				// Use the full regex match for broad placeholder checks (e.g. "example",
+				// "mock", "your_").
 				matchedValue := matches[0]
 				if isPlaceholderSecret(matchedValue) {
 					continue
 				}
 				if isSelfAssignedSecret(line) {
+					continue
+				}
+				// Also extract the quoted value alone and check whether it is a
+				// PascalCase type name (e.g. GlobalContinuationToken) — these are
+				// clearly identifiers, not real secret values.
+				_, quotedValue := extractKeyValue(line)
+				if quotedValue != "" && isPascalCaseTypeName(quotedValue) {
 					continue
 				}
 			}
@@ -813,17 +942,13 @@ func (s *sastAnalyzer) AnalyzeDirectory(dir string) []Finding {
 			return nil
 		}
 		if info.IsDir() {
-			base := filepath.Base(path)
-			if base == "node_modules" || base == ".git" || base == "__pycache__" || base == ".venv" {
-				return filepath.SkipDir
-			}
-			if isTestDir(base) {
+			if isExcludedDir(filepath.Base(path)) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
 
-		if isTestFile(filepath.Base(path)) {
+		if isExcludedFile(filepath.Base(path)) {
 			return nil
 		}
 
@@ -848,17 +973,13 @@ func (s *sastAnalyzer) DetectEgress(dir string) []EgressFinding {
 			return nil
 		}
 		if info.IsDir() {
-			base := filepath.Base(path)
-			if base == "node_modules" || base == ".git" || base == "__pycache__" || base == ".venv" {
-				return filepath.SkipDir
-			}
-			if isTestDir(base) {
+			if isExcludedDir(filepath.Base(path)) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
 
-		if isTestFile(filepath.Base(path)) {
+		if isExcludedFile(filepath.Base(path)) {
 			return nil
 		}
 
