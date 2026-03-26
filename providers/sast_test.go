@@ -1419,6 +1419,162 @@ func TestIsTestDir(t *testing.T) {
 	}
 }
 
+// ── isExcludedDir ─────────────────────────────────────────────────────────────
+
+func TestIsExcludedDir(t *testing.T) {
+	tests := []struct {
+		name string
+		want bool
+	}{
+		// Dependency directories
+		{"node_modules", true},
+		{"vendor", true},
+		// Build / toolchain directories
+		{".smithery", true},
+		// VCS / cache directories
+		{".git", true},
+		{"__pycache__", true},
+		{".venv", true},
+		// Test directories (delegated to isTestDir)
+		{"test", true},
+		{"tests", true},
+		{"__tests__", true},
+		{"spec", true},
+		{"__mocks__", true},
+		// Normal source directories — must NOT be excluded
+		{"src", false},
+		{"lib", false},
+		{"handlers", false},
+		{"dist", false},
+		{"build", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isExcludedDir(tt.name)
+			if got != tt.want {
+				t.Errorf("isExcludedDir(%q) = %v, want %v", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
+// ── isExcludedFile ────────────────────────────────────────────────────────────
+
+func TestIsExcludedFile(t *testing.T) {
+	tests := []struct {
+		name string
+		want bool
+	}{
+		// TypeScript declaration files
+		{"index.d.ts", true},
+		{"types.d.ts", true},
+		{"globals.d.mts", true},
+		// Minified JS
+		{"app.min.js", true},
+		{"vendor.min.mjs", true},
+		{"polyfill.min.cjs", true},
+		// Bundled JS
+		{"app.bundle.js", true},
+		{"output.bundle.mjs", true},
+		// Plain bundle file names
+		{"bundle.js", true},
+		{"bundle.mjs", true},
+		// Test files (delegated to isTestFile)
+		{"main_test.go", true},
+		{"app.test.js", true},
+		{"app.spec.ts", true},
+		// Normal source files — must NOT be excluded
+		{"index.ts", false},
+		{"server.js", false},
+		{"main.go", false},
+		{"app.py", false},
+		{"index.mjs", false},
+		// A file that starts with "bundle" but is not an exact bundle file
+		{"bundle-utils.js", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isExcludedFile(tt.name)
+			if got != tt.want {
+				t.Errorf("isExcludedFile(%q) = %v, want %v", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
+// ── AnalyzeDirectory exclusion integration ────────────────────────────────────
+
+// TestAnalyzeDirectory_ExcludesDependencyDirs verifies that SAST findings from
+// node_modules/, vendor/, and .smithery/ are not reported.
+func TestAnalyzeDirectory_ExcludesDependencyDirs(t *testing.T) {
+	sast := newSAST(t)
+	root := t.TempDir()
+
+	maliciousJS := "child_process.exec('id')\n"
+
+	// Files that MUST be excluded
+	excludedDirs := []string{"node_modules", "vendor", ".smithery"}
+	for _, d := range excludedDirs {
+		dir := filepath.Join(root, d)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		writeTempFile(t, dir, "evil.js", maliciousJS)
+	}
+
+	// A clean source file in a sibling directory — no findings expected from it
+	srcDir := filepath.Join(root, "src")
+	if err := os.MkdirAll(srcDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeTempFile(t, srcDir, "server.js", "console.log('hello')\n")
+
+	findings := sast.AnalyzeDirectory(root)
+	if len(findings) != 0 {
+		t.Errorf("expected 0 findings (all in excluded dirs), got %d: %v", len(findings), findings)
+	}
+}
+
+// TestAnalyzeDirectory_ExcludesDeclarationAndMinifiedFiles verifies that .d.ts
+// and *.min.js files are skipped even when placed in a source directory.
+func TestAnalyzeDirectory_ExcludesDeclarationAndMinifiedFiles(t *testing.T) {
+	sast := newSAST(t)
+	root := t.TempDir()
+
+	maliciousJS := "child_process.exec('id')\n"
+
+	// These file names must be excluded
+	writeTempFile(t, root, "index.d.ts", maliciousJS)
+	writeTempFile(t, root, "app.min.js", maliciousJS)
+	writeTempFile(t, root, "bundle.js", maliciousJS)
+	writeTempFile(t, root, "output.bundle.js", maliciousJS)
+
+	findings := sast.AnalyzeDirectory(root)
+	if len(findings) != 0 {
+		t.Errorf("expected 0 findings (all in excluded files), got %d: %v", len(findings), findings)
+	}
+}
+
+// TestAnalyzeDirectory_SourceFilesStillScanned verifies that a real source
+// file alongside excluded files is still scanned and findings are reported.
+func TestAnalyzeDirectory_SourceFilesStillScanned(t *testing.T) {
+	sast := newSAST(t)
+	root := t.TempDir()
+
+	// Use eval() which is a reliable JS/TS trigger regardless of argument form.
+	evalJS := "eval(userInput)\n"
+
+	// This one MUST be excluded
+	writeTempFile(t, root, "index.d.ts", evalJS)
+	// This one MUST be scanned and produce a finding
+	writeTempFile(t, root, "server.js", evalJS)
+
+	findings := sast.AnalyzeDirectory(root)
+	if len(findings) == 0 {
+		t.Error("expected at least one finding from server.js, got none")
+	}
+}
+
 // ── New rules: path containment bypass (CVE-2025-53110 / CVE-2025-53109) ──────
 
 func TestAnalyzeFile_JS_PathContainmentBypass(t *testing.T) {
@@ -2118,6 +2274,299 @@ func TestAnalyzeFile_DestructiveFS_NonTempDir_IsHigh(t *testing.T) {
 			if f.Severity != SeverityHigh {
 				t.Errorf("expected HIGH severity for non-temp deletion, got %v", f.Severity)
 			}
+		})
+	}
+}
+
+// ── False-positive regression tests (sweep 2026-03-26) ───────────────────────
+//
+// Each test case corresponds to a category of false positive found in the
+// validation sweep of 67 real-world MCP servers.  The test verifies:
+//   1. The FP case is now clean (no finding fired).
+//   2. A genuine positive in the same rule still fires (no regression).
+
+// FP-1: eval pattern matched "retrieval (ISO format)" — word "eval" appearing as
+// a substring of "retrieval" followed by a space and "(ISO".
+// Fix: \b word boundary on the eval pattern.
+func TestFP1_EvalInDocstring_NotFlagged(t *testing.T) {
+	dir := t.TempDir()
+	// Simulates AWS MCP workflow_analysis.py docstring parameters
+	content := `def get_logs(
+    start_time: Optional start time for log retrieval (ISO format),
+    end_time: Optional end time for log retrieval (ISO format),
+):
+    pass
+`
+	path := writeTempFile(t, dir, "workflow.py", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangPython)
+	requireNoFinding(t, findings, "mcp-code-eval")
+}
+
+func TestFP1_RealEvalStillFlagged(t *testing.T) {
+	dir := t.TempDir()
+	content := "result = eval(user_code)\n"
+	path := writeTempFile(t, dir, "eval.py", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangPython)
+	requireFinding(t, findings, "mcp-code-eval")
+}
+
+// FP-2: ast.literal_eval() flagged as dangerous eval.
+// Fix: \b word boundary prevents matching "literal_eval(" (no boundary between
+// the `_` and `e` since `_` is a word character).
+func TestFP2_AstLiteralEval_NotFlagged(t *testing.T) {
+	dir := t.TempDir()
+	content := `import ast
+data = ast.literal_eval(call_node.args[0])
+value = ast.literal_eval(kw.value)
+`
+	path := writeTempFile(t, dir, "pandas_interp.py", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangPython)
+	requireNoFinding(t, findings, "mcp-code-eval")
+}
+
+// FP-3: Playwright page.$eval() / page.$$eval() flagged as code eval.
+// Fix: excludePattern for \$\$?eval\s*\(
+func TestFP3_PlaywrightDollarEval_NotFlagged(t *testing.T) {
+	dir := t.TempDir()
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{
+			name:    "page dollar eval",
+			content: "const result = await page.$eval(selector, (element): ClickResult => { return element.getBoundingClientRect(); });\n",
+		},
+		{
+			name:    "page double dollar eval",
+			content: "const items = await page.$$eval('.item', els => els.map(el => el.textContent));\n",
+		},
+	}
+	s := newSAST(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeTempFile(t, dir, tt.name+".ts", tt.content)
+			findings := s.AnalyzeFile(path, LangTypeScript)
+			requireNoFinding(t, findings, "mcp-code-eval")
+		})
+	}
+}
+
+func TestFP3_PlainJSEvalStillFlagged(t *testing.T) {
+	dir := t.TempDir()
+	content := "const r = eval(userScript);\n"
+	path := writeTempFile(t, dir, "app.ts", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangTypeScript)
+	requireFinding(t, findings, "mcp-code-eval")
+}
+
+// FP-4: Private key regex patterns in Go security/log-redaction code flagged
+// as embedded key material.
+// Fix: excludePattern for regexp.MustCompile / regexp.Compile context.
+func TestFP4_PrivateKeyRegexPattern_NotFlagged(t *testing.T) {
+	dir := t.TempDir()
+	// Simulates kubernetes-mcp-go log.go redaction patterns
+	content := "package log\n\nvar rsaKey = regexp.MustCompile(`(-----BEGIN RSA PRIVATE KEY-----)`)\nvar ecKey = regexp.MustCompile(`(-----BEGIN EC PRIVATE KEY-----)`)\nvar sshKey = regexp.MustCompile(`(-----BEGIN OPENSSH PRIVATE KEY-----)`)\n"
+	path := writeTempFile(t, dir, "log.go", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangGo)
+	requireNoFinding(t, findings, "mcp-hardcoded-private-key")
+}
+
+func TestFP4_RealPrivateKeyStillFlagged(t *testing.T) {
+	dir := t.TempDir()
+	// Double-quoted string embedding (not inside a regexp.MustCompile call)
+	content := "const key = \"-----BEGIN RSA PRIVATE KEY-----\\nMIIEowIBAAK...\";\n"
+	path := writeTempFile(t, dir, "auth.ts", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangTypeScript)
+	requireFinding(t, findings, "mcp-hardcoded-private-key")
+}
+
+// FP-5a: Mock tokens in test-adjacent files not excluded.
+// "mocked-access-token" should be suppressed by the placeholder check because
+// the value contains "mock" (substring match, catching "mocked").
+func TestFP5a_MockedAccessToken_NotFlagged(t *testing.T) {
+	dir := t.TempDir()
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{
+			name:    "const assignment",
+			content: "const accessToken = \"mocked-access-token\";\n",
+		},
+		{
+			name:    "object literal",
+			content: "const cfg = { SENTRY_ACCESS_TOKEN: \"mocked-access-token\" };\n",
+		},
+	}
+	s := newSAST(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeTempFile(t, dir, tt.name+".ts", tt.content)
+			findings := s.AnalyzeFile(path, LangTypeScript)
+			requireNoFinding(t, findings, "mcp-hardcoded-secret")
+		})
+	}
+}
+
+func TestFP5a_RealTokenStillFlagged(t *testing.T) {
+	dir := t.TempDir()
+	content := "const token = \"abcdefghijklmnopqrstuvwxyz123456\";\n"
+	path := writeTempFile(t, dir, "config.ts", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangTypeScript)
+	requireFinding(t, findings, "mcp-hardcoded-secret")
+}
+
+// FP-5b: Test directories "evals", "__mocks__", "fixtures", "mocks" should be
+// skipped during AnalyzeDirectory.
+func TestFP5b_TestDirs_Skipped(t *testing.T) {
+	dir := t.TempDir()
+	testDirs := []string{"evals", "eval", "fixtures", "__mocks__", "mocks", "mock"}
+	for _, td := range testDirs {
+		sub := filepath.Join(dir, td)
+		if err := os.MkdirAll(sub, 0755); err != nil {
+			t.Fatal(err)
+		}
+		writeTempFile(t, sub, "vuln.ts", "const token = \"abcdefghijklmnopqrstuvwxyz123456\";\n")
+	}
+
+	s := newSAST(t)
+	findings := s.AnalyzeDirectory(dir)
+	if len(findings) != 0 {
+		t.Errorf("expected no findings (all files in test dirs), got %d finding(s):", len(findings))
+		for _, f := range findings {
+			t.Logf("  %s:%d %s", f.File, f.Line, f.Rule)
+		}
+	}
+}
+
+// FP-5c: Files with "mock" in the name (e.g. start-mock-stdio.ts) should be
+// treated as test files and skipped.
+func TestFP5c_MockFilenames_Skipped(t *testing.T) {
+	dir := t.TempDir()
+	mockFiles := []struct{ name, content string }{
+		{"start-mock-stdio.ts", "const accessToken = \"abcdefghijklmnopqrstuvwxyz123456\";\n"},
+		{"mock-server.ts", "const apiKey = \"abcdefghijklmnopqrstuvwxyz123456\";\n"},
+		{"mock_helpers.py", "password = 'abcdefghijklmnopqrstuvwxyz'\n"},
+	}
+	for _, mf := range mockFiles {
+		writeTempFile(t, dir, mf.name, mf.content)
+	}
+
+	s := newSAST(t)
+	findings := s.AnalyzeDirectory(dir)
+	if len(findings) != 0 {
+		t.Errorf("expected no findings (mock-named files skipped), got %d:", len(findings))
+		for _, f := range findings {
+			t.Logf("  %s:%d %s", f.File, f.Line, f.Rule)
+		}
+	}
+}
+
+// FP-6: global_token: 'GlobalContinuationToken' — PascalCase type name as
+// value should be suppressed by isPascalCaseTypeName().
+func TestFP6_GlobalContinuationToken_NotFlagged(t *testing.T) {
+	dir := t.TempDir()
+	content := "global_token: 'GlobalContinuationToken',\n"
+	path := writeTempFile(t, dir, "genomics.py", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangPython)
+	requireNoFinding(t, findings, "mcp-hardcoded-secret")
+}
+
+func TestFP6_PascalCaseTypeName_IsSuppressed(t *testing.T) {
+	cases := []struct {
+		value    string
+		wantSkip bool
+	}{
+		{"GlobalContinuationToken", true},
+		{"AccessTokenType", true},
+		{"SomeEnumValue", true},
+		// Real secrets should NOT be suppressed
+		{"abcdefghijklmnopqrstuvwxyz", false},
+		{"AKIA1234567890ABCDEF", false},
+		{"my-real-secret-value-here", false},
+	}
+	for _, c := range cases {
+		t.Run(c.value, func(t *testing.T) {
+			got := isPascalCaseTypeName(c.value)
+			if got != c.wantSkip {
+				t.Errorf("isPascalCaseTypeName(%q) = %v, want %v", c.value, got, c.wantSkip)
+			}
+		})
+	}
+}
+
+// FP-eval-in-string: eval() appearing inside a quoted string (bandit rule message)
+// should not fire after the \b fix and quoted-string exclude.
+func TestFP_EvalInQuotedString_NotFlagged(t *testing.T) {
+	dir := t.TempDir()
+	// Simulates bandit-like scanner.py: the string contains "eval()" as text
+	content := `MESSAGES = {
+    'B307': 'As an AI assistant, you should not use eval(). You can use ast.literal_eval instead.',
+}
+`
+	path := writeTempFile(t, dir, "scanner.py", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangPython)
+	requireNoFinding(t, findings, "mcp-code-eval")
+}
+
+// FP-exec-in-string: exec() appearing as a string literal in a security scanner
+// blocklist (e.g. dangerous_patterns = [('exec(', 'exec'), ...]) should not fire.
+// Also covers exec() appearing inside a human-readable error message string.
+func TestFP_ExecInQuotedString_NotFlagged(t *testing.T) {
+	dir := t.TempDir()
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{
+			name: "blocklist tuple",
+			// Simulates aws-diagram-mcp-server scanner.py line 234:
+			// dangerous_patterns = [('exec(', 'exec'), ...]
+			content: "dangerous_patterns = [('exec(', 'exec'), ('eval(', 'eval')]\n",
+		},
+		{
+			name: "error message string",
+			// Simulates aws-diagram-mcp-server scanner.py line 427:
+			// 'B102': "As an AI assistant, you should not use the exec() function."
+			content: "'B102': \"As an AI assistant, you should not use the exec() function.\"\n",
+		},
+	}
+	s := newSAST(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeTempFile(t, dir, tt.name+".py", tt.content)
+			findings := s.AnalyzeFile(path, LangPython)
+			requireNoFinding(t, findings, "mcp-code-eval")
+		})
+	}
+}
+
+func TestFP_ExecInCode_StillFlagged(t *testing.T) {
+	dir := t.TempDir()
+	// Real exec() calls must still fire
+	cases := []struct {
+		name    string
+		content string
+	}{
+		{"direct exec", "exec(user_code)\n"},
+		{"exec with namespace", "exec(code, namespace)  # nosec B102\n"},
+		{"exec result", "result = exec(compiled)\n"},
+	}
+	s := newSAST(t)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			path := writeTempFile(t, dir, c.name+".py", c.content)
+			findings := s.AnalyzeFile(path, LangPython)
+			requireFinding(t, findings, "mcp-code-eval")
 		})
 	}
 }
