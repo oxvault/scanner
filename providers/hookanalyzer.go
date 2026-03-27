@@ -26,7 +26,7 @@ func (h *hookAnalyzer) AnalyzeDirectory(dir string) []Finding {
 			return nil
 		}
 		if info.IsDir() {
-			if filepath.Base(path) == "node_modules" || filepath.Base(path) == ".git" {
+			if IsExcludedDir(filepath.Base(path)) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -100,10 +100,7 @@ func scanScriptContent(script, pkgFile, hookName string) []Finding {
 	var findings []Finding
 	for _, hp := range patterns.HookPatterns {
 		if hp.Pattern.MatchString(script) {
-			trimmed := script
-			if len(trimmed) > 120 {
-				trimmed = trimmed[:120] + "..."
-			}
+			trimmed := truncate(script, 120)
 			findings = append(findings, Finding{
 				Rule:     hp.Rule,
 				Severity: hp.Severity,
@@ -134,8 +131,10 @@ func extractReferencedFile(script, pkgDir string) (string, bool) {
 	return full, true
 }
 
-// scanReferencedFile reads a script file and scans each line for malicious patterns.
-func scanReferencedFile(path, hookName string) []Finding {
+// scanFileWithPatterns reads a file, splits it into lines, and matches each
+// line against the given hook patterns. It is the shared core for
+// scanReferencedFile, analyzePythonSetup, and analyzePyproject.
+func scanFileWithPatterns(path string, pats []patterns.HookPattern) []Finding {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil
@@ -145,12 +144,9 @@ func scanReferencedFile(path, hookName string) []Finding {
 	lines := strings.Split(string(data), "\n")
 
 	for lineNum, line := range lines {
-		for _, hp := range patterns.HookPatterns {
+		for _, hp := range pats {
 			if hp.Pattern.MatchString(line) {
-				trimmed := strings.TrimSpace(line)
-				if len(trimmed) > 120 {
-					trimmed = trimmed[:120] + "..."
-				}
+				trimmed := truncate(strings.TrimSpace(line), 120)
 				findings = append(findings, Finding{
 					Rule:     hp.Rule,
 					Severity: hp.Severity,
@@ -164,68 +160,19 @@ func scanReferencedFile(path, hookName string) []Finding {
 	}
 
 	return findings
+}
+
+// scanReferencedFile reads a script file and scans each line for malicious patterns.
+func scanReferencedFile(path, hookName string) []Finding {
+	return scanFileWithPatterns(path, patterns.HookPatterns)
 }
 
 // analyzePythonSetup scans a setup.py file for malicious install hook patterns.
 func (h *hookAnalyzer) analyzePythonSetup(path string, hpats []patterns.HookPattern) []Finding {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil
-	}
-
-	var findings []Finding
-	lines := strings.Split(string(data), "\n")
-
-	for lineNum, line := range lines {
-		for _, hp := range hpats {
-			if hp.Pattern.MatchString(line) {
-				trimmed := strings.TrimSpace(line)
-				if len(trimmed) > 120 {
-					trimmed = trimmed[:120] + "..."
-				}
-				findings = append(findings, Finding{
-					Rule:     hp.Rule,
-					Severity: hp.Severity,
-					Message:  fmt.Sprintf(hp.Message, trimmed),
-					File:     path,
-					Line:     lineNum + 1,
-					CWE:      hp.CWE,
-				})
-			}
-		}
-	}
-
-	return findings
+	return scanFileWithPatterns(path, hpats)
 }
 
 // analyzePyproject scans a pyproject.toml for cmdclass overrides.
 func (h *hookAnalyzer) analyzePyproject(path string) []Finding {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil
-	}
-
-	var findings []Finding
-	lines := strings.Split(string(data), "\n")
-
-	for lineNum, line := range lines {
-		for _, hp := range patterns.PyPIPatterns {
-			if hp.Pattern.MatchString(line) {
-				trimmed := strings.TrimSpace(line)
-				if len(trimmed) > 120 {
-					trimmed = trimmed[:120] + "..."
-				}
-				findings = append(findings, Finding{
-					Rule:     hp.Rule,
-					Severity: hp.Severity,
-					Message:  fmt.Sprintf(hp.Message, trimmed),
-					File:     path,
-					Line:     lineNum + 1,
-					CWE:      hp.CWE,
-				})
-			}
-		}
-	}
-
-	return findings
+	return scanFileWithPatterns(path, patterns.PyPIPatterns)
 }

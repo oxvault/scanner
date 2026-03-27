@@ -21,7 +21,8 @@ func newTestScanner(
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	depAuditor := &testutil.MockDepAuditor{}
 	hookAnalyzer := &testutil.MockHookAnalyzer{}
-	return NewScanner(resolver, mcpClient, ruleMatcher, sast, depAuditor, hookAnalyzer, reporter, logger)
+	suppressor := &testutil.MockSuppressor{}
+	return NewScanner(resolver, mcpClient, ruleMatcher, sast, depAuditor, hookAnalyzer, reporter, suppressor, nil, logger)
 }
 
 // defaultResolvedPackage returns a minimal ResolvedPackage used across tests.
@@ -746,8 +747,11 @@ func newTestScannerWithProbe(
 	reporter *testutil.MockReporter,
 	probe *testutil.MockNetProbe,
 ) ScannerEngine {
-	eng := newTestScanner(resolver, mcpClient, ruleMatcher, sast, reporter)
-	return WithNetProbe(eng, probe)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	depAuditor := &testutil.MockDepAuditor{}
+	hookAnalyzer := &testutil.MockHookAnalyzer{}
+	suppressor := &testutil.MockSuppressor{}
+	return NewScanner(resolver, mcpClient, ruleMatcher, sast, depAuditor, hookAnalyzer, reporter, suppressor, probe, logger)
 }
 
 func TestScanner_ProbeNetwork_CallsProbe(t *testing.T) {

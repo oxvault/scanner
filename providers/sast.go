@@ -50,13 +50,15 @@ func isPascalCaseTypeName(value string) bool {
 
 // ── Fix 2: Constant self-assignment exclusion ─────────���───────────────────────
 
+// keyValueRe matches key-value assignments like `SOME_NAME = "value"`.
+var keyValueRe = regexp.MustCompile(`(?i)([A-Z0-9_]+)\s*[:=]+\s*["']([^"']+)["']`)
+
 // extractKeyValue attempts to extract the key and quoted value from a line
 // like `SOME_NAME = 'SOME_NAME'` or `api_key = "api_key"`.
 // Returns ("", "") when the pattern cannot be identified.
 func extractKeyValue(line string) (key, value string) {
 	// Match: <identifier> <op> <quote><value><quote>
-	re := regexp.MustCompile(`(?i)([A-Z0-9_]+)\s*[:=]+\s*["']([^"']+)["']`)
-	m := re.FindStringSubmatch(line)
+	m := keyValueRe.FindStringSubmatch(line)
 	if len(m) < 3 {
 		return "", ""
 	}
@@ -324,10 +326,11 @@ func (s *sastAnalyzer) AnalyzeFile(path string, lang Language) []Finding {
 	return findings
 }
 
-func (s *sastAnalyzer) AnalyzeDirectory(dir string) []Finding {
-	var findings []Finding
-
-	_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+// walkSourceFiles walks dir, skipping excluded directories and files, and calls
+// fn for each source file with a recognised language. This eliminates the
+// duplicated filepath.Walk boilerplate in AnalyzeDirectory and DetectEgress.
+func walkSourceFiles(dir string, fn func(path string, lang Language)) error {
+	return filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -347,9 +350,17 @@ func (s *sastAnalyzer) AnalyzeDirectory(dir string) []Finding {
 			return nil
 		}
 
+		fn(path, lang)
+		return nil
+	})
+}
+
+func (s *sastAnalyzer) AnalyzeDirectory(dir string) []Finding {
+	var findings []Finding
+
+	_ = walkSourceFiles(dir, func(path string, lang Language) {
 		fileFindings := s.AnalyzeFile(path, lang)
 		findings = append(findings, fileFindings...)
-		return nil
 	})
 
 	return findings
@@ -358,29 +369,10 @@ func (s *sastAnalyzer) AnalyzeDirectory(dir string) []Finding {
 func (s *sastAnalyzer) DetectEgress(dir string) []EgressFinding {
 	var findings []EgressFinding
 
-	_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-		if info.IsDir() {
-			if isExcludedDir(filepath.Base(path)) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-
-		if isExcludedFile(filepath.Base(path)) {
-			return nil
-		}
-
-		lang := detectLanguage(path)
-		if lang == LangUnknown {
-			return nil
-		}
-
+	_ = walkSourceFiles(dir, func(path string, lang Language) {
 		file, err := os.Open(path)
 		if err != nil {
-			return nil
+			return
 		}
 		defer func() { _ = file.Close() }()
 
@@ -408,7 +400,6 @@ func (s *sastAnalyzer) DetectEgress(dir string) []EgressFinding {
 				}
 			}
 		}
-		return nil
 	})
 
 	return findings

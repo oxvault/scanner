@@ -181,7 +181,7 @@ func (a *App) InitProviders() error {
 // InitEngines creates all engine instances, injecting providers
 func (a *App) InitEngines() error {
 	if a.scanner == nil {
-		eng := engines.NewScanner(
+		a.scanner = engines.NewScanner(
 			a.resolver,
 			a.mcpClient,
 			a.ruleMatcher,
@@ -189,12 +189,10 @@ func (a *App) InitEngines() error {
 			a.depAuditor,
 			a.hookAnalyzer,
 			a.reporter,
+			a.suppressor,
+			a.netProbe,
 			a.Logger,
 		)
-		// Attach the net probe so the scanner can use it when ProbeNetwork is set.
-		eng = engines.WithNetProbe(eng, a.netProbe)
-		// Attach the suppressor so findings can be filtered at the end of Scan.
-		a.scanner = engines.WithSuppressor(eng, a.suppressor)
 	}
 	if a.pinner == nil {
 		a.pinner = engines.NewPinner(
