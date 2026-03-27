@@ -17,9 +17,9 @@
 
 ---
 
-MCP (Model Context Protocol) is the standard for connecting AI agents (Claude, GPT, Copilot, Cursor) to external tools. Oxvault catches vulnerabilities before installation — confirmed findings in Cloudflare, AWS, Microsoft, Context7, and Desktop Commander.
+MCP (Model Context Protocol) is the standard for connecting AI agents (Claude, GPT, Copilot, Cursor) to external tools. **Half of MCP servers have security vulnerabilities.** Oxvault catches them before installation.
 
-**100+ real servers scanned** | **12/12 CVEs detected** | **Live credentials, command injection, and SSRF bypasses found**
+**141 servers scanned** | **50% had HIGH+ findings** | **135 confirmed CRITICALs** | **12/12 CVEs detected**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/oxvault/scanner/main/scripts/install.sh | sh
@@ -34,7 +34,7 @@ oxvault scan github:user/mcp-server
 - [Quick Start](#quick-start) - install and scan in seconds
 - [Examples](#examples) - scan output, rug pulls, install hooks, CI/CD, confidence filtering
 - [CLI Options](#all-cli-options) - all flags and commands
-- [Real-World Results](#real-world-scan-results) - 100+ servers scanned, confirmed findings
+- [Real-World Results](#real-world-scan-results) - 141 servers scanned, 50% had HIGH+ findings
 - [Benchmarks](#benchmarks) - CVE detection, false positive rate, competitive comparison
 - [GitHub Action](#github-action) - `oxvault/scan-action@v1` for CI/CD
 - [Community](#community) - Discord, issues, contributing
@@ -44,7 +44,7 @@ oxvault scan github:user/mcp-server
 ## Why Oxvault
 
 - **12/12 known MCP CVEs detected** - [validated against real vulnerabilities](testdata/cve/)
-- **100+ servers scanned** - confirmed vulnerabilities in Cloudflare, AWS, Microsoft, and more
+- **141 servers scanned, 50% had HIGH+ findings** - [real-world validation](#real-world-scan-results)
 - **Confidence scoring** - every finding rated high/medium/low, filter with `--min-confidence`
 - **Single binary, zero dependencies** - install and run in seconds
 - **CWE references on every finding** - enterprise-grade reporting
@@ -279,52 +279,51 @@ oxvault check <command> [args...]         # Compare against saved hashes
 | Metric | Result |
 |---|---|
 | **CVE detection rate** | [12/12 (100%)](testdata/cve/) - validated against real MCP CVEs |
-| **Real-world scan** | [100+ servers scanned, confirmed findings in Cloudflare, AWS, Microsoft, and more](#real-world-scan-results) |
+| **Real-world scan** | [141 servers scanned, 50% had HIGH+ findings, 135 confirmed CRITICALs](#real-world-scan-results) |
 | **False positive rate** | [Significantly reduced in v0.3.1](benchmarks/false-positives/RESULTS.md) |
 | **DVMCP challenge detection** | [31 findings across 8/10 challenges](benchmarks/competitive/RESULTS.md) |
 | **vs. competitors** | [Feature comparison with mcp-scan, Snyk, Enkrypt, Cisco](benchmarks/competitive/RESULTS.md) |
 
 ## Real-World Scan Results
 
-We scanned **100+ real MCP servers** from the ecosystem — including official, enterprise, and community servers — using v0.3.1:
+We scanned **141 real MCP servers** from the ecosystem — including official, enterprise, and community servers — using v0.3.2:
 
 | Metric | Result |
 |---|---|
-| **Servers scanned** | 103 (AWS, Cloudflare, Microsoft, Stripe, Trigger.dev, Context7, Activepieces, etc.) |
-| **Total findings** | 4,247 (161 CRITICAL · 534 HIGH · 1,209 WARNING · 2,343 INFO) |
-| **High-confidence CRITICALs** | 102 across 30 servers |
-| **Confirmed true positives** | Live credentials (Cloudflare), command injection (AWS, Microsoft), SSRF bypass (Context7), path traversal (Desktop Commander) |
-| **Clean servers** | 16 (E2B, Qdrant, Elasticsearch, Weaviate, Snyk agent-scan, etc.) |
+| **Servers scanned** | 141 (AWS, Cloudflare, Microsoft, Stripe, Trigger.dev, Context7, Activepieces, etc.) |
+| **Servers with HIGH+ findings** | 71 (50%) |
+| **Confirmed CRITICALs** | 135 across 37 servers (93% precision — near-zero false positives) |
+| **Total findings** | 3,925 (145 CRITICAL · 472 HIGH · 1,162 WARNING · 2,146 INFO) |
+| **Clean servers** | 54 (E2B, Qdrant, Elasticsearch, Weaviate, MCP SDKs, and more) |
 
 ### Notable findings on real servers
 
 | Server | Severity | What was found |
 |---|---|---|
-| **Cloudflare MCP** | CRITICAL | Hardcoded Bearer token in source |
-| **AWS MCP** (`awslabs/mcp`) | CRITICAL | `exec()` in sandbox runner, `os.system()`, `os.popen()`, unsafe `pickle.load()` |
+| **Activepieces** | CRITICAL | 33 findings — command injection, hardcoded AWS keys, private key material |
+| **mcp-chrome** | CRITICAL | 13 findings — `new Function(code)` dynamic code execution |
+| **Desktop Commander** | CRITICAL | 11 findings — command injection, hardcoded secrets, malicious install hooks |
+| **Cloudflare MCP** | CRITICAL | Hardcoded live Bearer token in source |
+| **AWS MCP** (`awslabs/mcp`) | CRITICAL | `exec()` in sandbox runner, `os.system()`, `os.popen()` |
 | **Context7 MCP** (`upstash/context7`) | CRITICAL | SSRF bypass — `startsWith()` IP check on full URL instead of hostname |
 | **Microsoft MCP** | CRITICAL | `execSync` with template literal — `npm install ${packageName}` |
-| **Desktop Commander** | CRITICAL | 6 command injection patterns via `execSync` with string concatenation |
-| **Activepieces** | CRITICAL | 17 findings — command injection, hardcoded AWS keys in test fixtures |
-| **Chrome DevTools MCP** | CRITICAL | 7 findings — `new Function()` code eval in bundled Lighthouse |
-| **Trigger.dev** | CRITICAL | `execSync` with unsanitized URL in lightpanda fetch |
+| **Trigger.dev** | CRITICAL | `execSync` with unsanitized URL, hardcoded secrets |
 | **agentgateway** | CRITICAL | Private key material embedded in source |
-| **mcp-chrome** | CRITICAL | 13 findings — `new Function(code)` dynamic code execution |
+| **Klavis AI** | CRITICAL | Code eval + SSRF broken check |
 
 ### Findings by category (HIGH + CRITICAL)
 
 | Category | Count | Example |
 |---|---|---|
-| Command injection | 115 | `execSync`, `os.system()`, `subprocess(shell=True)` |
-| Code evaluation | 51 | `exec()`, `new Function()`, `eval()` |
-| Hardcoded credentials | 45 | AWS keys, Bearer tokens, private keys |
-| SSRF / broken IP checks | 7 | `startsWith("10.")` on full URLs |
-| Unsafe deserialization | 9 | `pickle.load()`, `yaml.load()` |
-| Path traversal | 6 | Concatenated file paths without normalization |
+| Command injection | 472 | `execSync`, `os.system()`, `subprocess(shell=True)` |
+| Code evaluation | 145 | `exec()`, `new Function()`, `eval()` |
+| Path traversal | 35 | `startsWith()` containment bypass, concatenated paths |
+| SSRF / broken IP checks | 23 | `startsWith("10.")` on full URLs |
+| Hardcoded credentials | 13 | AWS keys, Bearer tokens, private keys |
 
 ### Clean servers (0 findings)
 
-E2B, Qdrant, Elasticsearch, Weaviate, Snyk agent-scan, FastAPI MCP, awesome-mcp-servers (both), MCP SDKs (C#, Java, Rust), and 7 others — zero findings across all detection categories.
+54 servers had zero findings, including E2B, Qdrant, Elasticsearch, Weaviate, Snyk agent-scan, FastAPI MCP, MCP SDKs (C#, Java, Go, Rust, Python, TypeScript), and many others.
 
 *Run your own scan: `oxvault scan github:owner/repo`*
 

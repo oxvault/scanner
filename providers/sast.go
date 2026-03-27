@@ -54,6 +54,7 @@ var placeholderPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)mock`),
 	regexp.MustCompile(`(?i)fake`),
 	regexp.MustCompile(`(?i)\btest\b`),
+	regexp.MustCompile(`(?i)^pending[_-]`),
 }
 
 // isPlaceholderSecret returns true when value looks like a documentation
@@ -287,6 +288,11 @@ var sourcePatterns = []sourcePattern{
 		message:    "Unsafe pickle deserialization (arbitrary code execution risk): %s",
 		langs:      []Language{LangPython},
 		cwe:        "CWE-502",
+		excludePatterns: []*regexp.Regexp{
+			// pickle.loads( appearing inside a quoted string literal — e.g. a
+			// security scanner blocklist: dangerous_patterns = [('pickle.loads(', ...)]
+			regexp.MustCompile(`["'][^"']*pickle\.(loads?)\s*\(`),
+		},
 	},
 	{
 		// yaml.load( without Loader= is the unsafe form; yaml.safe_load is fine
@@ -297,6 +303,10 @@ var sourcePatterns = []sourcePattern{
 		message:    "Unsafe yaml.load() without SafeLoader (use yaml.safe_load): %s",
 		langs:      []Language{LangPython},
 		cwe:        "CWE-502",
+		excludePatterns: []*regexp.Regexp{
+			// yaml.load( appearing inside a quoted string literal
+			regexp.MustCompile(`["'][^"']*yaml\.load\s*\(`),
+		},
 	},
 
 	// ── SSRF / open redirect — Python ────────────────────────────────────────
@@ -347,6 +357,10 @@ var sourcePatterns = []sourcePattern{
 		message:    "child_process.exec with string concatenation/template (injection risk): %s",
 		langs:      []Language{LangJavaScript, LangTypeScript},
 		cwe:        "CWE-78",
+		excludePatterns: []*regexp.Regexp{
+			// Process PID lookups — ppid/pid are integers from the kernel
+			regexp.MustCompile(`(?i)(\$\{?\s*)?(ppid|process\.pid|process\.ppid)\s*\}?`),
+		},
 	},
 	{
 		// exec( / execSync( called directly (imported as named binding) with
@@ -358,6 +372,10 @@ var sourcePatterns = []sourcePattern{
 		message:    "execSync with string concatenation/template (injection risk): %s",
 		langs:      []Language{LangJavaScript, LangTypeScript},
 		cwe:        "CWE-78",
+		excludePatterns: []*regexp.Regexp{
+			// Process PID lookups — ppid/pid are integers from the kernel
+			regexp.MustCompile(`(?i)(\$\{?\s*)?(ppid|process\.pid|process\.ppid)\s*\}?`),
+		},
 	},
 	{
 		// child_process.spawn with shell: true
@@ -482,6 +500,10 @@ var sourcePatterns = []sourcePattern{
 		message:    "startsWith() used as path containment check — bypassable via prefix confusion or symlinks (use path.resolve + path.sep): %s",
 		langs:      []Language{LangJavaScript, LangTypeScript},
 		cwe:        "CWE-22",
+		excludePatterns: []*regexp.Regexp{
+			// CORS / URL route matching — not filesystem containment
+			regexp.MustCompile(`(?i)(cors|route|url|pathname|origin|host)`),
+		},
 	},
 
 	// ── Broken SSRF guard — JavaScript/TypeScript ────────────────────────────
@@ -777,7 +799,11 @@ func isExcludedDir(name string) bool {
 	switch name {
 	case "node_modules", "vendor",
 		".smithery",
-		".git", "__pycache__", ".venv":
+		".git", "__pycache__", ".venv",
+		// Build output directories — transpiled/bundled code, not source
+		"dist", "build", "out",
+		// Vendored third-party code (e.g. Chrome DevTools Lighthouse bundle)
+		"third_party", "third-party":
 		return true
 	}
 	return isTestDir(name)
@@ -797,6 +823,11 @@ func isExcludedFile(name string) bool {
 		return true
 	}
 
+	// CommonJS bundle files (.cjs) — transpiled output, not hand-written source
+	if strings.HasSuffix(lower, ".cjs") {
+		return true
+	}
+
 	// Minified files
 	if strings.HasSuffix(lower, ".min.js") ||
 		strings.HasSuffix(lower, ".min.mjs") ||
@@ -812,6 +843,11 @@ func isExcludedFile(name string) bool {
 
 	// Plain bundle.js (common Webpack/esbuild output name)
 	if lower == "bundle.js" || lower == "bundle.mjs" {
+		return true
+	}
+
+	// Files with "bundle" in the name (e.g. lighthouse-devtools-mcp-bundle.js)
+	if strings.Contains(lower, "-bundle.") || strings.Contains(lower, "_bundle.") {
 		return true
 	}
 
@@ -851,6 +887,21 @@ func (s *sastAnalyzer) AnalyzeFile(path string, lang Language) []Finding {
 
 	var findings []Finding
 	lines := strings.Split(string(content), "\n")
+
+	// Skip bundled/transpiled files: if any of the first 20 lines exceeds
+	// 1000 characters, this is generated output (webpack, esbuild, rollup),
+	// not hand-written source code.
+	if lang == LangJavaScript || lang == LangTypeScript {
+		limit := 20
+		if len(lines) < limit {
+			limit = len(lines)
+		}
+		for i := 0; i < limit; i++ {
+			if len(lines[i]) > 1000 {
+				return nil
+			}
+		}
+	}
 
 	for _, sp := range sourcePatterns {
 		if !languageMatch(sp.langs, lang) {
@@ -892,11 +943,17 @@ func (s *sastAnalyzer) AnalyzeFile(path string, lang Language) []Finding {
 					continue
 				}
 				// Also extract the quoted value alone and check whether it is a
-				// PascalCase type name (e.g. GlobalContinuationToken) — these are
-				// clearly identifiers, not real secret values.
+				// placeholder or PascalCase type name (e.g. GlobalContinuationToken,
+				// PENDING_COGNITO_TOKEN) — these are clearly identifiers or
+				// placeholder values, not real secret values.
 				_, quotedValue := extractKeyValue(line)
-				if quotedValue != "" && isPascalCaseTypeName(quotedValue) {
-					continue
+				if quotedValue != "" {
+					if isPlaceholderSecret(quotedValue) {
+						continue
+					}
+					if isPascalCaseTypeName(quotedValue) {
+						continue
+					}
 				}
 			}
 
