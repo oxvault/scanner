@@ -34,8 +34,7 @@ func (d *depAuditor) AuditDirectory(dir string) []Finding {
 			return nil
 		}
 		if info.IsDir() {
-			base := filepath.Base(path)
-			if base == "node_modules" || base == ".git" || base == "__pycache__" || base == ".venv" {
+			if IsExcludedDir(filepath.Base(path)) {
 				return filepath.SkipDir
 			}
 			return nil

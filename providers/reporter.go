@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/fatih/color"
+	"github.com/oxvault/scanner/internal/version"
 )
 
 // Color and style definitions — declared as package-level vars so tests can
@@ -361,7 +362,7 @@ func (r *reporter) reportSARIF(findings []Finding) ([]byte, error) {
 	}
 	run := sarifRun{Results: results}
 	run.Tool.Driver.Name = "oxvault"
-	run.Tool.Driver.Version = "0.1.0"
+	run.Tool.Driver.Version = version.Version
 	report.Runs = []sarifRun{run}
 
 	return json.MarshalIndent(report, "", "  ")
