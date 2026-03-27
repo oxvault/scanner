@@ -1,79 +1,48 @@
 package providers
 
-import "time"
+import (
+	"time"
 
-// Confidence levels for findings
-type Confidence int
-
-const (
-	ConfidenceLow    Confidence = 1
-	ConfidenceMedium Confidence = 2
-	ConfidenceHigh   Confidence = 3
+	"github.com/oxvault/scanner/patterns"
 )
 
-// String returns the human-readable label for a confidence level.
-func (c Confidence) String() string {
-	switch c {
-	case ConfidenceLow:
-		return "low"
-	case ConfidenceMedium:
-		return "medium"
-	case ConfidenceHigh:
-		return "high"
-	default:
-		return "unknown"
-	}
-}
-
-// Severity levels for findings
-type Severity int
+// Type aliases — zero breakage for all consumers.
+type Confidence = patterns.Confidence
 
 const (
-	SeverityInfo Severity = iota
-	SeverityWarning
-	SeverityHigh
-	SeverityCritical
+	ConfidenceLow    = patterns.ConfidenceLow
+	ConfidenceMedium = patterns.ConfidenceMedium
+	ConfidenceHigh   = patterns.ConfidenceHigh
 )
 
-func (s Severity) String() string {
-	switch s {
-	case SeverityInfo:
-		return "INFO"
-	case SeverityWarning:
-		return "WARNING"
-	case SeverityHigh:
-		return "HIGH"
-	case SeverityCritical:
-		return "CRITICAL"
-	default:
-		return "UNKNOWN"
-	}
-}
-
-// RiskTier classifies tool exposure level
-type RiskTier int
+type Severity = patterns.Severity
 
 const (
-	RiskTierLow    RiskTier = iota // Compute-only, data transformation
-	RiskTierMedium                 // Network requests, messaging
-	RiskTierHigh                   // Filesystem, database, infrastructure
-	RiskTierCritical               // Shell execution, code eval
+	SeverityInfo     = patterns.SeverityInfo
+	SeverityWarning  = patterns.SeverityWarning
+	SeverityHigh     = patterns.SeverityHigh
+	SeverityCritical = patterns.SeverityCritical
 )
 
-func (t RiskTier) String() string {
-	switch t {
-	case RiskTierLow:
-		return "LOW"
-	case RiskTierMedium:
-		return "MEDIUM"
-	case RiskTierHigh:
-		return "HIGH"
-	case RiskTierCritical:
-		return "CRITICAL"
-	default:
-		return "UNKNOWN"
-	}
-}
+type RiskTier = patterns.RiskTier
+
+const (
+	RiskTierLow      = patterns.RiskTierLow
+	RiskTierMedium   = patterns.RiskTierMedium
+	RiskTierHigh     = patterns.RiskTierHigh
+	RiskTierCritical = patterns.RiskTierCritical
+)
+
+type Language = patterns.Language
+
+const (
+	LangPython     = patterns.LangPython
+	LangJavaScript = patterns.LangJavaScript
+	LangTypeScript = patterns.LangTypeScript
+	LangGo         = patterns.LangGo
+	LangJSON       = patterns.LangJSON
+	LangUnknown    = patterns.LangUnknown
+)
 
 // OutputFormat for report generation
 type OutputFormat string
@@ -82,18 +51,6 @@ const (
 	FormatTerminal OutputFormat = "terminal"
 	FormatSARIF    OutputFormat = "sarif"
 	FormatJSON     OutputFormat = "json"
-)
-
-// Language for source code analysis
-type Language string
-
-const (
-	LangPython     Language = "python"
-	LangJavaScript Language = "javascript"
-	LangTypeScript Language = "typescript"
-	LangGo         Language = "go"
-	LangJSON       Language = "json"
-	LangUnknown    Language = "unknown"
 )
 
 // Finding represents a single security finding
@@ -113,11 +70,11 @@ type Finding struct {
 
 // MCPTool represents a tool from the MCP tools/list response
 type MCPTool struct {
-	Name        string                 `json:"name"`
-	Title       string                 `json:"title,omitempty"`
-	Description string                 `json:"description"`
-	InputSchema map[string]any         `json:"inputSchema,omitempty"`
-	Annotations map[string]any         `json:"annotations,omitempty"`
+	Name        string         `json:"name"`
+	Title       string         `json:"title,omitempty"`
+	Description string         `json:"description"`
+	InputSchema map[string]any `json:"inputSchema,omitempty"`
+	Annotations map[string]any `json:"annotations,omitempty"`
 }
 
 // MCPServerInfo from the initialize response

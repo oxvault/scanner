@@ -7,168 +7,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/oxvault/scanner/patterns"
 )
-
-// hookPattern represents a single malicious pattern to match in install scripts.
-type hookPattern struct {
-	pattern  *regexp.Regexp
-	rule     string
-	severity Severity
-	message  string
-	cwe      string
-}
-
-// hookInstallScripts is the set of package.json script keys that run during install.
-var hookInstallScripts = []string{
-	"preinstall",
-	"install",
-	"postinstall",
-	"prepare",
-}
-
-// hookPatterns are ordered from most to least severe.
-var hookPatterns = []hookPattern{
-	// ── CRITICAL: Direct execution threats ──────────────────────────────────
-
-	{
-		// curl ... | sh / curl ... | bash / curl ... | /bin/sh
-		pattern:  regexp.MustCompile(`(?i)(curl|wget)\s+[^\|]+\|\s*(bash|sh|/bin/sh|/bin/bash)`),
-		rule:     "mcp-install-hook-pipe-to-shell",
-		severity: SeverityCritical,
-		message:  "Install script pipes remote download to shell: %s",
-		cwe:      "CWE-506",
-	},
-	{
-		// eval(...) with dynamic content
-		pattern:  regexp.MustCompile(`\beval\s*\(`),
-		rule:     "mcp-install-hook-eval",
-		severity: SeverityCritical,
-		message:  "Install script uses eval() for dynamic code execution: %s",
-		cwe:      "CWE-506",
-	},
-	{
-		// Base64 decode piped to eval or exec: echo ... | base64 -d | sh
-		pattern:  regexp.MustCompile(`(?i)base64\s+(-d|--decode)\s*\|?\s*(bash|sh|eval|exec)`),
-		rule:     "mcp-install-hook-base64-exec",
-		severity: SeverityCritical,
-		message:  "Install script decodes base64 and executes result: %s",
-		cwe:      "CWE-506",
-	},
-	{
-		// node -e "..." inline code execution in shell script value
-		pattern:  regexp.MustCompile(`node\s+-e\s+["'\x60]`),
-		rule:     "mcp-install-hook-node-inline",
-		severity: SeverityCritical,
-		message:  "Install script uses node -e for inline code execution: %s",
-		cwe:      "CWE-506",
-	},
-	{
-		// python -c "..." inline code execution
-		pattern:  regexp.MustCompile(`python[23]?\s+-c\s+["'\x60]`),
-		rule:     "mcp-install-hook-python-inline",
-		severity: SeverityCritical,
-		message:  "Install script uses python -c for inline code execution: %s",
-		cwe:      "CWE-506",
-	},
-	{
-		// sh -c "..." shell command execution
-		pattern:  regexp.MustCompile(`\bsh\s+-c\s+["'\x60]`),
-		rule:     "mcp-install-hook-sh-inline",
-		severity: SeverityCritical,
-		message:  "Install script uses sh -c for inline shell execution: %s",
-		cwe:      "CWE-506",
-	},
-	{
-		// child_process.exec in referenced JS/TS files
-		pattern:  regexp.MustCompile(`child_process\.(exec|execSync)\s*\(`),
-		rule:     "mcp-install-hook-child-process-exec",
-		severity: SeverityCritical,
-		message:  "Install script file uses child_process.exec (arbitrary command execution): %s",
-		cwe:      "CWE-506",
-	},
-	{
-		// Binary download to a path then chmod+x or direct execution
-		pattern:  regexp.MustCompile(`(?i)(curl|wget)\s+.*-[oO]\s+\S+.*&&.*(chmod|exec|\.\/)`),
-		rule:     "mcp-install-hook-binary-download",
-		severity: SeverityCritical,
-		message:  "Install script downloads and executes a binary: %s",
-		cwe:      "CWE-506",
-	},
-
-	// ── HIGH: Suspicious but possibly legitimate ──────────────────────────────
-
-	{
-		// curl/wget to any external URL (data exfiltration / supply chain risk)
-		pattern:  regexp.MustCompile(`(?i)(curl|wget)\s+https?://`),
-		rule:     "mcp-install-hook-outbound-download",
-		severity: SeverityHigh,
-		message:  "Install script fetches external URL (data exfiltration or supply-chain risk): %s",
-		cwe:      "CWE-506",
-	},
-	{
-		// Environment variable access combined with a network call on the same line
-		pattern:  regexp.MustCompile(`(?i)(process\.env\.|getenv\().*?(curl|wget|fetch|http\.get|axios)`),
-		rule:     "mcp-install-hook-env-exfil",
-		severity: SeverityHigh,
-		message:  "Install script reads environment variable and makes network call (possible exfiltration): %s",
-		cwe:      "CWE-506",
-	},
-	{
-		// fs.readFile on sensitive credential paths in referenced scripts
-		pattern:  regexp.MustCompile(`(?i)(readFile|readFileSync|open)\s*\(\s*['"\x60]?(~\/\.(ssh|aws|gnupg|kube|docker)|\.env)[^)]*\)`),
-		rule:     "mcp-install-hook-sensitive-file-read",
-		severity: SeverityHigh,
-		message:  "Install script file reads sensitive credential path: %s",
-		cwe:      "CWE-506",
-	},
-
-	// ── WARNING: Worth reviewing ──────────────────────────────────────────────
-
-	{
-		// Any network call in install scripts (npm packages should not phone home)
-		pattern:  regexp.MustCompile(`(?i)(fetch|http\.get|http\.request|https\.get|https\.request|axios|requests\.get|requests\.post)\s*\(`),
-		rule:     "mcp-install-hook-network-call",
-		severity: SeverityWarning,
-		message:  "Install script makes network request (packages should not phone home during install): %s",
-		cwe:      "CWE-506",
-	},
-	{
-		// File system writes outside package directory (writes to absolute paths)
-		pattern:  regexp.MustCompile(`(?i)(writeFile|writeFileSync|fs\.write)\s*\(\s*['"\x60]\/`),
-		rule:     "mcp-install-hook-fs-write-absolute",
-		severity: SeverityWarning,
-		message:  "Install script writes to absolute filesystem path outside package directory: %s",
-		cwe:      "CWE-506",
-	},
-	{
-		// process.env access in install scripts
-		pattern:  regexp.MustCompile(`process\.env\.[A-Z_][A-Z0-9_]*`),
-		rule:     "mcp-install-hook-env-access",
-		severity: SeverityWarning,
-		message:  "Install script accesses environment variables (verify no sensitive data is read): %s",
-		cwe:      "CWE-506",
-	},
-}
-
-// pypiPatterns detect malicious Python package install hook patterns.
-var pypiPatterns = []hookPattern{
-	{
-		// setup.py with custom cmdclass that overrides install
-		pattern:  regexp.MustCompile(`cmdclass\s*=\s*\{[^}]*['"]install['"]\s*:`),
-		rule:     "mcp-install-hook-pypi-cmdclass",
-		severity: SeverityHigh,
-		message:  "setup.py overrides install command via cmdclass (code runs during pip install): %s",
-		cwe:      "CWE-506",
-	},
-	{
-		// pyproject.toml cmdclass override
-		pattern:  regexp.MustCompile(`\[tool\.setuptools\.cmdclass\]`),
-		rule:     "mcp-install-hook-pypi-cmdclass",
-		severity: SeverityHigh,
-		message:  "pyproject.toml defines setuptools cmdclass override (code runs during pip install): %s",
-		cwe:      "CWE-506",
-	},
-}
 
 type hookAnalyzer struct{}
 
@@ -196,7 +37,7 @@ func (h *hookAnalyzer) AnalyzeDirectory(dir string) []Finding {
 		case "package.json":
 			findings = append(findings, h.analyzePackageJSON(path)...)
 		case "setup.py":
-			findings = append(findings, h.analyzePythonSetup(path, pypiPatterns)...)
+			findings = append(findings, h.analyzePythonSetup(path, patterns.PyPIPatterns)...)
 		case "pyproject.toml":
 			findings = append(findings, h.analyzePyproject(path)...)
 		}
@@ -234,7 +75,7 @@ func (h *hookAnalyzer) analyzePackageJSON(path string) []Finding {
 	var findings []Finding
 	pkgDir := filepath.Dir(path)
 
-	for _, hook := range hookInstallScripts {
+	for _, hook := range patterns.HookInstallScripts {
 		script, ok := pkg.Scripts[hook]
 		if !ok || strings.TrimSpace(script) == "" {
 			continue
@@ -257,18 +98,18 @@ func (h *hookAnalyzer) analyzePackageJSON(path string) []Finding {
 // scanScriptContent scans a single script string value for malicious patterns.
 func scanScriptContent(script, pkgFile, hookName string) []Finding {
 	var findings []Finding
-	for _, hp := range hookPatterns {
-		if hp.pattern.MatchString(script) {
+	for _, hp := range patterns.HookPatterns {
+		if hp.Pattern.MatchString(script) {
 			trimmed := script
 			if len(trimmed) > 120 {
 				trimmed = trimmed[:120] + "..."
 			}
 			findings = append(findings, Finding{
-				Rule:     hp.rule,
-				Severity: hp.severity,
-				Message:  fmt.Sprintf(hp.message, trimmed),
+				Rule:     hp.Rule,
+				Severity: hp.Severity,
+				Message:  fmt.Sprintf(hp.Message, trimmed),
 				File:     pkgFile,
-				CWE:      hp.cwe,
+				CWE:      hp.CWE,
 				// Line is not available from JSON value; omit.
 			})
 		}
@@ -304,19 +145,19 @@ func scanReferencedFile(path, hookName string) []Finding {
 	lines := strings.Split(string(data), "\n")
 
 	for lineNum, line := range lines {
-		for _, hp := range hookPatterns {
-			if hp.pattern.MatchString(line) {
+		for _, hp := range patterns.HookPatterns {
+			if hp.Pattern.MatchString(line) {
 				trimmed := strings.TrimSpace(line)
 				if len(trimmed) > 120 {
 					trimmed = trimmed[:120] + "..."
 				}
 				findings = append(findings, Finding{
-					Rule:     hp.rule,
-					Severity: hp.severity,
-					Message:  fmt.Sprintf(hp.message, trimmed),
+					Rule:     hp.Rule,
+					Severity: hp.Severity,
+					Message:  fmt.Sprintf(hp.Message, trimmed),
 					File:     path,
 					Line:     lineNum + 1,
-					CWE:      hp.cwe,
+					CWE:      hp.CWE,
 				})
 			}
 		}
@@ -326,7 +167,7 @@ func scanReferencedFile(path, hookName string) []Finding {
 }
 
 // analyzePythonSetup scans a setup.py file for malicious install hook patterns.
-func (h *hookAnalyzer) analyzePythonSetup(path string, patterns []hookPattern) []Finding {
+func (h *hookAnalyzer) analyzePythonSetup(path string, hpats []patterns.HookPattern) []Finding {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil
@@ -336,19 +177,19 @@ func (h *hookAnalyzer) analyzePythonSetup(path string, patterns []hookPattern) [
 	lines := strings.Split(string(data), "\n")
 
 	for lineNum, line := range lines {
-		for _, hp := range patterns {
-			if hp.pattern.MatchString(line) {
+		for _, hp := range hpats {
+			if hp.Pattern.MatchString(line) {
 				trimmed := strings.TrimSpace(line)
 				if len(trimmed) > 120 {
 					trimmed = trimmed[:120] + "..."
 				}
 				findings = append(findings, Finding{
-					Rule:     hp.rule,
-					Severity: hp.severity,
-					Message:  fmt.Sprintf(hp.message, trimmed),
+					Rule:     hp.Rule,
+					Severity: hp.Severity,
+					Message:  fmt.Sprintf(hp.Message, trimmed),
 					File:     path,
 					Line:     lineNum + 1,
-					CWE:      hp.cwe,
+					CWE:      hp.CWE,
 				})
 			}
 		}
@@ -368,19 +209,19 @@ func (h *hookAnalyzer) analyzePyproject(path string) []Finding {
 	lines := strings.Split(string(data), "\n")
 
 	for lineNum, line := range lines {
-		for _, hp := range pypiPatterns {
-			if hp.pattern.MatchString(line) {
+		for _, hp := range patterns.PyPIPatterns {
+			if hp.Pattern.MatchString(line) {
 				trimmed := strings.TrimSpace(line)
 				if len(trimmed) > 120 {
 					trimmed = trimmed[:120] + "..."
 				}
 				findings = append(findings, Finding{
-					Rule:     hp.rule,
-					Severity: hp.severity,
-					Message:  fmt.Sprintf(hp.message, trimmed),
+					Rule:     hp.Rule,
+					Severity: hp.Severity,
+					Message:  fmt.Sprintf(hp.Message, trimmed),
 					File:     path,
 					Line:     lineNum + 1,
-					CWE:      hp.cwe,
+					CWE:      hp.CWE,
 				})
 			}
 		}
