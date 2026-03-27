@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/oxvault/scanner/internal/version"
 	"github.com/oxvault/scanner/patterns"
 )
 
@@ -424,7 +425,7 @@ func runMCPSession(w io.Writer, r io.Reader, timeout time.Duration) ([]MCPTool, 
 		Params: map[string]any{
 			"protocolVersion": "2024-11-05",
 			"capabilities":    map[string]any{},
-			"clientInfo":      map[string]any{"name": "oxvault-probe", "version": "0.1.0"},
+			"clientInfo":      map[string]any{"name": "oxvault-probe", "version": version.Version},
 		},
 	}); err != nil {
 		return nil, fmt.Errorf("send initialize: %w", err)

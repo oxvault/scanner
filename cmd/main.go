@@ -9,11 +9,16 @@ import (
 	"github.com/oxvault/scanner/app"
 	"github.com/oxvault/scanner/config"
 	"github.com/oxvault/scanner/engines"
+	iversion "github.com/oxvault/scanner/internal/version"
 	"github.com/oxvault/scanner/providers"
 	"github.com/spf13/cobra"
 )
 
-var version = "0.1.0"
+// version defaults to the canonical version from internal/version but can be
+// overridden via ldflags:
+//
+//	go build -ldflags "-X github.com/oxvault/scanner/internal/version.Version=x.y.z"
+var version = iversion.Version
 
 func main() {
 	root := &cobra.Command{

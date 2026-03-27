@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"os/exec"
 	"sync/atomic"
+
+	"github.com/oxvault/scanner/internal/version"
 )
 
 type mcpClient struct {
@@ -84,7 +86,7 @@ func (c *mcpClient) Connect(cmd string, args []string) (*MCPSession, error) {
 			"capabilities":    map[string]any{},
 			"clientInfo": map[string]any{
 				"name":    "oxvault",
-				"version": "0.1.0",
+				"version": version.Version,
 			},
 		},
 	}

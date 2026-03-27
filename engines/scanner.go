@@ -77,6 +77,8 @@ func NewScanner(
 	depAuditor providers.DepAuditor,
 	hookAnalyzer providers.HookAnalyzer,
 	reporter providers.Reporter,
+	suppressor providers.Suppressor,
+	netProbe providers.NetProbe,
 	logger *slog.Logger,
 ) ScannerEngine {
 	return &scanner{
@@ -87,24 +89,10 @@ func NewScanner(
 		depAuditor:   depAuditor,
 		hookAnalyzer: hookAnalyzer,
 		reporter:     reporter,
+		suppressor:   suppressor,
+		netProbe:     netProbe,
 		logger:       logger,
 	}
-}
-
-// WithSuppressor attaches a Suppressor to an existing ScannerEngine.
-// This is separate from NewScanner to keep the constructor signature stable.
-func WithSuppressor(eng ScannerEngine, sup providers.Suppressor) ScannerEngine {
-	s := eng.(*scanner)
-	s.suppressor = sup
-	return s
-}
-
-// WithNetProbe returns a ScannerEngine with a net probe attached.
-// This is separate from NewScanner to keep the constructor signature stable.
-func WithNetProbe(eng ScannerEngine, probe providers.NetProbe) ScannerEngine {
-	s := eng.(*scanner)
-	s.netProbe = probe
-	return s
 }
 
 func (s *scanner) Scan(target string, opts ScanOptions) (*ScanReport, error) {
