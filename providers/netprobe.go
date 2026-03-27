@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/oxvault/scanner/patterns"
 )
 
 // netActivityType constants for NetActivity.Type.
@@ -561,7 +563,7 @@ func dummyValueForType(prop map[string]any) any {
 // rfc1918Nets are the private address ranges from RFC 1918.
 var rfc1918Nets = func() []*net.IPNet {
 	var nets []*net.IPNet
-	for _, cidr := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"} {
+	for _, cidr := range patterns.RFC1918CIDRs {
 		_, n, _ := net.ParseCIDR(cidr)
 		nets = append(nets, n)
 	}

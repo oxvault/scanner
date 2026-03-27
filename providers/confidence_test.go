@@ -2,6 +2,8 @@ package providers
 
 import (
 	"testing"
+
+	"github.com/oxvault/scanner/patterns"
 )
 
 // ── SAST confidence assignment ────────────────────────────────────────────────
@@ -123,9 +125,9 @@ func TestSAST_ConfidenceNoZeroValues(t *testing.T) {
 	// Verify that every sourcePattern has an explicit confidence value (no zero values
 	// will survive after the default-fallback in AnalyzeFile — but we can check the
 	// pattern table directly to ensure intentional assignment).
-	for _, sp := range sourcePatterns {
-		if sp.confidence == 0 {
-			t.Errorf("sourcePattern %q has confidence=0 (missing explicit assignment)", sp.rule)
+	for _, sp := range patterns.SourcePatterns {
+		if sp.Confidence == 0 {
+			t.Errorf("sourcePattern %q has confidence=0 (missing explicit assignment)", sp.Rule)
 		}
 	}
 }
@@ -204,9 +206,9 @@ func TestRuleMatcher_ConfidenceAssigned_ScanResponse(t *testing.T) {
 
 func TestRuleMatcher_ConfidenceNoZeroValues(t *testing.T) {
 	// Verify all descriptionPatterns have explicit confidence
-	for _, p := range descriptionPatterns {
-		if p.confidence == 0 {
-			t.Errorf("descriptionPattern %q has confidence=0 (missing explicit assignment)", p.rule)
+	for _, p := range patterns.DescriptionPatterns {
+		if p.Confidence == 0 {
+			t.Errorf("descriptionPattern %q has confidence=0 (missing explicit assignment)", p.Rule)
 		}
 	}
 }
