@@ -17,9 +17,9 @@
 
 ---
 
-MCP (Model Context Protocol) is the standard for connecting AI agents (Claude, GPT, Copilot, Cursor) to external tools. **84% of MCP servers have security vulnerabilities.** Oxvault catches them before installation.
+MCP (Model Context Protocol) is the standard for connecting AI agents (Claude, GPT, Copilot, Cursor) to external tools. Oxvault catches vulnerabilities before installation — confirmed findings in Cloudflare, AWS, Microsoft, Context7, and Desktop Commander.
 
-**103 real servers scanned** | **84% had findings** | **4,247 total findings** | **12/12 CVEs detected**
+**100+ real servers scanned** | **12/12 CVEs detected** | **Live credentials, command injection, and SSRF bypasses found**
 
 ```bash
 go install github.com/oxvault/scanner/cmd@latest
@@ -34,7 +34,7 @@ oxvault scan github:user/mcp-server
 - [Quick Start](#quick-start) - install and scan in seconds
 - [Examples](#examples) - scan output, rug pulls, install hooks, CI/CD, confidence filtering
 - [CLI Options](#all-cli-options) - all flags and commands
-- [Real-World Results](#real-world-scan-results) - 67 servers scanned, notable findings
+- [Real-World Results](#real-world-scan-results) - 100+ servers scanned, confirmed findings
 - [Benchmarks](#benchmarks) - CVE detection, false positive rate, competitive comparison
 - [GitHub Action](#github-action) - `oxvault/scan-action@v1` for CI/CD
 - [Community](#community) - Discord, issues, contributing
@@ -44,7 +44,7 @@ oxvault scan github:user/mcp-server
 ## Why Oxvault
 
 - **12/12 known MCP CVEs detected** - [validated against real vulnerabilities](testdata/cve/)
-- **67 servers scanned, 82% had findings** - [real-world validation](#real-world-scan-results)
+- **100+ servers scanned** - confirmed vulnerabilities in Cloudflare, AWS, Microsoft, and more
 - **Confidence scoring** - every finding rated high/medium/low, filter with `--min-confidence`
 - **Single binary, zero dependencies** - install and run in seconds
 - **CWE references on every finding** - enterprise-grade reporting
@@ -276,21 +276,21 @@ oxvault check <command> [args...]         # Compare against saved hashes
 | Metric | Result |
 |---|---|
 | **CVE detection rate** | [12/12 (100%)](testdata/cve/) - validated against real MCP CVEs |
-| **Real-world scan** | [67 servers scanned, 82% had findings, 1,362 total findings](#real-world-scan-results) |
+| **Real-world scan** | [100+ servers scanned, confirmed findings in Cloudflare, AWS, Microsoft, and more](#real-world-scan-results) |
 | **False positive rate** | [Significantly reduced in v0.3.1](benchmarks/false-positives/RESULTS.md) |
 | **DVMCP challenge detection** | [31 findings across 8/10 challenges](benchmarks/competitive/RESULTS.md) |
 | **vs. competitors** | [Feature comparison with mcp-scan, Snyk, Enkrypt, Cisco](benchmarks/competitive/RESULTS.md) |
 
 ## Real-World Scan Results
 
-We scanned **103 real MCP servers** from the ecosystem — including official, enterprise, and community servers — using v0.3.1. Results:
+We scanned **100+ real MCP servers** from the ecosystem — including official, enterprise, and community servers — using v0.3.1:
 
 | Metric | Result |
 |---|---|
 | **Servers scanned** | 103 (AWS, Cloudflare, Microsoft, Stripe, Trigger.dev, Context7, Activepieces, etc.) |
-| **Vulnerability rate** | 84% of servers had security findings (87/103) |
 | **Total findings** | 4,247 (161 CRITICAL · 534 HIGH · 1,209 WARNING · 2,343 INFO) |
 | **High-confidence CRITICALs** | 102 across 30 servers |
+| **Confirmed true positives** | Live credentials (Cloudflare), command injection (AWS, Microsoft), SSRF bypass (Context7), path traversal (Desktop Commander) |
 | **Clean servers** | 16 (E2B, Qdrant, Elasticsearch, Weaviate, Snyk agent-scan, etc.) |
 
 ### Notable findings on real servers
