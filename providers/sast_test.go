@@ -1441,12 +1441,17 @@ func TestIsExcludedDir(t *testing.T) {
 		{"__tests__", true},
 		{"spec", true},
 		{"__mocks__", true},
+		// Build output directories
+		{"dist", true},
+		{"build", true},
+		{"out", true},
+		// Vendored third-party directories
+		{"third_party", true},
+		{"third-party", true},
 		// Normal source directories — must NOT be excluded
 		{"src", false},
 		{"lib", false},
 		{"handlers", false},
-		{"dist", false},
-		{"build", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1483,6 +1488,9 @@ func TestIsExcludedFile(t *testing.T) {
 		{"main_test.go", true},
 		{"app.test.js", true},
 		{"app.spec.ts", true},
+		// CommonJS bundle files
+		{"vendor.cjs", true},
+		{"ajv.cjs", true},
 		// Normal source files — must NOT be excluded
 		{"index.ts", false},
 		{"server.js", false},
@@ -2567,6 +2575,191 @@ func TestFP_ExecInCode_StillFlagged(t *testing.T) {
 			path := writeTempFile(t, dir, c.name+".py", c.content)
 			findings := s.AnalyzeFile(path, LangPython)
 			requireFinding(t, findings, "mcp-code-eval")
+		})
+	}
+}
+
+// ── False-positive regression tests (sweep 2026-03-27) ───────────────────────
+//
+// Each test verifies a remaining FP identified in the validation report is
+// now suppressed, and that genuine positives in the same rule still fire.
+
+// FP-pickle-in-string: pickle.loads( appearing in a security scanner blocklist
+// string literal should not fire as unsafe deserialization.
+func TestFP_PickleInStringLiteral_NotFlagged(t *testing.T) {
+	dir := t.TempDir()
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{
+			name:    "blocklist tuple",
+			content: "dangerous_patterns = [('pickle.loads(', 'pickle.loads')]\n",
+		},
+		{
+			name:    "error message",
+			content: "'W302': \"Do not use pickle.load() on untrusted data.\"\n",
+		},
+	}
+	s := newSAST(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeTempFile(t, dir, tt.name+".py", tt.content)
+			findings := s.AnalyzeFile(path, LangPython)
+			requireNoFinding(t, findings, "mcp-unsafe-deserialization")
+		})
+	}
+}
+
+func TestFP_RealPickle_StillFlagged(t *testing.T) {
+	dir := t.TempDir()
+	content := "data = pickle.loads(raw_bytes)\n"
+	path := writeTempFile(t, dir, "deser.py", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangPython)
+	requireFinding(t, findings, "mcp-unsafe-deserialization")
+}
+
+// FP-yaml-in-string: yaml.load( appearing in a string literal should not fire.
+func TestFP_YamlLoadInStringLiteral_NotFlagged(t *testing.T) {
+	dir := t.TempDir()
+	content := "warnings = [\"Do not use yaml.load(stream) without SafeLoader\"]\n"
+	path := writeTempFile(t, dir, "warn.py", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangPython)
+	requireNoFinding(t, findings, "mcp-unsafe-deserialization")
+}
+
+func TestFP_RealYamlLoad_StillFlagged(t *testing.T) {
+	dir := t.TempDir()
+	content := "data = yaml.load(stream)\n"
+	path := writeTempFile(t, dir, "parse.py", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangPython)
+	requireFinding(t, findings, "mcp-unsafe-deserialization")
+}
+
+// FP-cjs-files: .cjs files (CommonJS bundles) should be excluded from scanning.
+func TestFP_CJSFilesExcluded(t *testing.T) {
+	dir := t.TempDir()
+	// Simulates AJV validator bundled as .cjs with new Function() calls
+	content := "const validate = new Function('x', 'return x');\n"
+	writeTempFile(t, dir, "ajv.cjs", content)
+
+	s := newSAST(t)
+	findings := s.AnalyzeDirectory(dir)
+	if len(findings) != 0 {
+		t.Errorf("expected .cjs files to be excluded, got %d findings", len(findings))
+	}
+}
+
+// FP-cors-startsWith: CORS / URL route matching using startsWith with path
+// variables should not fire as path containment bypass.
+func TestFP_CORSRouteStartsWith_NotFlagged(t *testing.T) {
+	dir := t.TempDir()
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{
+			name:    "CORS pathname check",
+			content: "path.endsWith(\"/\") ? pathname.startsWith(path) : pathname === path\n",
+		},
+		{
+			name:    "URL route matching",
+			content: "if (url.startsWith(basePath)) { handleRoute(url); }\n",
+		},
+		{
+			name:    "origin check",
+			content: "const allowed = origin.startsWith(allowedBasePath);\n",
+		},
+	}
+	s := newSAST(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeTempFile(t, dir, tt.name+".js", tt.content)
+			findings := s.AnalyzeFile(path, LangJavaScript)
+			requireNoFinding(t, findings, "mcp-path-containment-bypass")
+		})
+	}
+}
+
+func TestFP_RealPathContainment_StillFlagged(t *testing.T) {
+	dir := t.TempDir()
+	// Filesystem containment check without URL/CORS context
+	content := "if (!requestedFile.startsWith(allowedDir)) { throw new Error('denied'); }\n"
+	path := writeTempFile(t, dir, "fs.js", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangJavaScript)
+	requireFinding(t, findings, "mcp-path-containment-bypass")
+}
+
+// FP-pid-execSync: execSync with process.ppid (kernel integer) should not fire.
+func TestFP_PIDSourcedExecSync_NotFlagged(t *testing.T) {
+	dir := t.TempDir()
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{
+			name:    "ppid template literal",
+			content: "const out = execSync(`ps -p ${ppid} -o command=`, { encoding: 'utf8' });\n",
+		},
+		{
+			name:    "process.ppid template",
+			content: "child_process.execSync(`ps -p ${process.ppid} -o command=`);\n",
+		},
+		{
+			name:    "process.pid concat",
+			content: "execSync('kill ' + process.pid);\n",
+		},
+	}
+	s := newSAST(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeTempFile(t, dir, tt.name+".js", tt.content)
+			findings := s.AnalyzeFile(path, LangJavaScript)
+			requireNoFinding(t, findings, "mcp-cmd-injection")
+		})
+	}
+}
+
+func TestFP_RealExecSyncInjection_StillFlagged(t *testing.T) {
+	dir := t.TempDir()
+	content := "execSync(`git clone ${repoUrl}`);\n"
+	path := writeTempFile(t, dir, "clone.js", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangJavaScript)
+	requireFinding(t, findings, "mcp-cmd-injection")
+}
+
+// FP-pending-secret: PENDING_COGNITO_TOKEN should be caught as a placeholder.
+func TestFP_PendingPlaceholderSecret_NotFlagged(t *testing.T) {
+	dir := t.TempDir()
+	content := `token = "PENDING_COGNITO_TOKEN"` + "\n"
+	path := writeTempFile(t, dir, "auth.py", content)
+	s := newSAST(t)
+	findings := s.AnalyzeFile(path, LangPython)
+	requireNoFinding(t, findings, "mcp-hardcoded-secret")
+}
+
+func TestIsPlaceholderSecret_PendingPrefix(t *testing.T) {
+	tests := []struct {
+		value string
+		want  bool
+	}{
+		{"PENDING_COGNITO_TOKEN", true},
+		{"pending-setup-key", true},
+		{"PENDING_VERIFICATION", true},
+		// Non-pending values should not match this pattern
+		{"REAL_COGNITO_TOKEN_ABC", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.value, func(t *testing.T) {
+			got := isPlaceholderSecret(tt.value)
+			if got != tt.want {
+				t.Errorf("isPlaceholderSecret(%q) = %v, want %v", tt.value, got, tt.want)
+			}
 		})
 	}
 }
