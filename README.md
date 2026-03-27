@@ -351,6 +351,10 @@ make scan-demo   # Build + scan example vulnerable servers
 - **Issues:** [GitHub Issues](https://github.com/oxvault/scanner/issues) - bug reports and feature requests
 - **PRs welcome** - especially new detection rules and CVE test cases
 
+## Related
+
+- **[Oxvault Gateway](https://github.com/oxvault/gateway)** — Runtime security proxy for MCP servers. Catches attacks at runtime that the scanner catches at install time. Supports both local (stdio) and remote (StreamableHTTP) MCP servers. Uses the scanner's detection engine for real-time argument and response inspection.
+
 ## License
 
 Apache 2.0 - see [LICENSE](LICENSE).
