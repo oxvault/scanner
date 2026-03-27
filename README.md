@@ -22,7 +22,7 @@ MCP (Model Context Protocol) is the standard for connecting AI agents (Claude, G
 **100+ real servers scanned** | **12/12 CVEs detected** | **Live credentials, command injection, and SSRF bypasses found**
 
 ```bash
-go install github.com/oxvault/scanner/cmd@latest
+curl -fsSL https://raw.githubusercontent.com/oxvault/scanner/main/scripts/install.sh | sh
 oxvault scan github:user/mcp-server
 ```
 
@@ -107,7 +107,10 @@ oxvault scan github:user/mcp-server
 ## Quick Start
 
 ```bash
-# Install
+# Install (one-liner)
+curl -fsSL https://raw.githubusercontent.com/oxvault/scanner/main/scripts/install.sh | sh
+
+# Or via Go
 go install github.com/oxvault/scanner/cmd@latest
 
 # Scan a local MCP server
