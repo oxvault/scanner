@@ -1,4 +1,6 @@
 BIN := bin/oxvault
+VERSION ?= $(shell git describe --tags --always 2>/dev/null || echo "dev")
+LDFLAGS := -X github.com/oxvault/scanner/internal/version.Version=$(VERSION)
 
 ifeq ($(OS),Windows_NT)
 	BIN := bin/oxvault.exe
@@ -9,7 +11,7 @@ endif
 all: build test
 
 build:
-	@go build -o $(BIN) ./cmd/
+	@go build -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/
 
 run:
 	@go run ./cmd/
