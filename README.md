@@ -165,12 +165,12 @@ $ oxvault scan ./examples/vulnerable-servers/tool-poisoning --skip-manifest
 A server starts clean, gets approved, then silently changes its tool descriptions to steal credentials. This is a real attack - [WhatsApp MCP was exploited this way](https://invariantlabs.ai/blog/whatsapp-mcp-exploited).
 
 ```bash
-# Day 1: Server looks clean - pin its tool hashes
-$ oxvault pin python3 ./examples/vulnerable-servers/rug-pull/server_v1.py
-  ✓ Pinned 2 tools. Hashes saved to .oxvault/pins.json
+# Day 1: Server looks clean — pin its tool hashes
+$ oxvault pin -- npx -y @modelcontextprotocol/server-filesystem /tmp
+  ✓ Pinned 5 tools. Hashes saved to .oxvault/pins.json
 
-# Day 30: Server pushes an "update" with hidden exfiltration instructions
-$ oxvault check python3 ./examples/vulnerable-servers/rug-pull/server_v2.py
+# Day 30: Check for rug pulls (description/schema changes)
+$ oxvault check -- npx -y @modelcontextprotocol/server-filesystem /tmp
   ✓ calculate: hash unchanged
   ✗ get_weather: Tool description or schema changed - possible rug pull
 
@@ -269,9 +269,9 @@ oxvault scan --probe-network             # Run runtime network probe (requires s
 oxvault scan --no-color                  # Disable colored output
 oxvault scan -v                          # Verbose logging
 
-# Pin & Check (rug pull detection)
-oxvault pin <command> [args...]           # Save tool description hashes
-oxvault check <command> [args...]         # Compare against saved hashes
+# Pin & Check (rug pull detection) — use -- before commands with flags
+oxvault pin -- <command> [args...]        # Save tool description hashes
+oxvault check -- <command> [args...]      # Compare against saved hashes
 ```
 
 ## Benchmarks
