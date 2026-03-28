@@ -50,7 +50,7 @@ func printLogo() {
 	fmt.Fprintf(os.Stderr, "\n  %s %s  %s\n",
 		cyan.Sprint("◉"),
 		bold.Sprint("Oxvault Scanner"),
-		dim.Sprintf("v%s", version))
+		dim.Sprint(version))
 	fmt.Fprintf(os.Stderr, "  %s\n\n",
 		dim.Sprint("MCP security scanner — detect vulnerabilities in AI tool integrations"))
 }
@@ -71,7 +71,7 @@ func printBanner(target string) {
 
 	fmt.Fprintf(os.Stderr, "\n  %s %s\n\n",
 		cyan.Sprint("◉"),
-		bold.Sprintf("Oxvault Scanner v%s", version))
+		bold.Sprintf("Oxvault Scanner %s", version))
 
 	fmt.Fprintf(os.Stderr, "  %s %s\n\n",
 		dim.Sprint("Scanning:"),
@@ -325,7 +325,7 @@ func runConfigScan(application *app.App, cfg *config.Config, opts engines.ScanOp
 
 		fmt.Fprintf(os.Stderr, "\n  %s %s\n\n",
 			cyan.Sprint("◉"),
-			bold.Sprintf("Oxvault Scanner v%s", version))
+			bold.Sprintf("Oxvault Scanner %s", version))
 
 		sourceLabel := configPath
 		if configPath == "auto" && len(result.SourceFiles) > 0 {
