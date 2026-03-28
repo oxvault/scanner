@@ -522,6 +522,7 @@ of each tool's description and schema. Use 'oxvault check' later to detect chang
 
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Verbose output")
 	cmd.Flags().BoolVar(&noColor, "no-color", false, "Disable color output")
+	cmd.Flags().SetInterspersed(false)
 	return cmd
 }
 
@@ -589,5 +590,6 @@ func newCheckCmd() *cobra.Command {
 
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Verbose output")
 	cmd.Flags().BoolVar(&noColor, "no-color", false, "Disable color output")
+	cmd.Flags().SetInterspersed(false)
 	return cmd
 }
