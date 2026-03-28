@@ -17,23 +17,27 @@ Oxvault Scanner is a CLI security tool that scans MCP (Model Context Protocol) s
 ## Architecture
 
 ```
-cmd/main.go         → Cobra CLI entry point (scan, pin, check commands)
-app/app.go          → DI container (App struct, functional options, ordered init)
-engines/            → Orchestrators (ScannerEngine, PinEngine)
-providers/           → Leaf nodes — each does one thing:
-  ├── interfaces.go     All provider contracts
-  ├── types.go          Finding, MCPTool, RiskTier, Severity, OutputFormat
-  ├── mcpclient.go      JSON-RPC client (initialize → tools/list)
-  ├── rulematcher.go    Description poisoning + argument injection + response patterns
-  ├── sast.go           Source code analysis (Python, JS/TS, Go) + egress detection
-  ├── reporter.go       Output formatting (terminal, SARIF, JSON)
-  ├── pinstore.go       SHA-256 tool hash storage for rug pull detection
-  ├── resolver.go       Target resolution (local path, npm, GitHub)
-  └── sanitizer.go      Response sanitization patterns (PII, keys)
-config/config.go    → Config struct + defaults
-rules/              → External rule definitions (semgrep YAML, YARA — future)
-examples/           → Intentionally vulnerable MCP servers for testing + demos
-testutil/mocks.go   → Mock implementations of all provider interfaces
+cmd/main.go              → Cobra CLI entry point (scan, pin, check commands)
+app/app.go               → DI container (App struct, functional options, ordered init)
+engines/                 → Orchestrators (ScannerEngine, PinEngine)
+providers/               → Leaf nodes — each does one thing:
+  ├── interfaces.go          All provider contracts
+  ├── types.go               Finding, MCPTool, RiskTier, Severity, OutputFormat
+  ├── fileutil.go            Shared file helpers (isExcludedDir, walkSourceFiles, etc.)
+  ├── mcpclient.go           JSON-RPC client (initialize → tools/list)
+  ├── rulematcher.go         Description poisoning + argument injection + response patterns
+  ├── sast.go                Source code analysis (Python, JS/TS, Go) + egress detection
+  ├── reporter.go            Output formatting (terminal, SARIF, JSON)
+  ├── pinstore.go            SHA-256 tool hash storage for rug pull detection
+  ├── resolver.go            Target resolution (local path, npm, GitHub)
+  └── sanitizer.go           Response sanitization patterns (PII, keys)
+patterns/                → Pure data — detection pattern lists (19 lists, 6 files)
+internal/version/        → Single source of truth for the CLI version string
+  └── version.go
+config/config.go         → Config struct + defaults
+rules/                   → External rule definitions (semgrep YAML, YARA — future)
+examples/                → Intentionally vulnerable MCP servers for testing + demos
+testutil/mocks.go        → Mock implementations of all provider interfaces
 ```
 
 ### Layer Rules
@@ -41,7 +45,9 @@ testutil/mocks.go   → Mock implementations of all provider interfaces
 - `cmd/` → knows about: `app/`
 - `app/` → knows about: `config/`, `engines/`, `providers/`
 - `engines/` → knows about: `providers/` (interfaces only)
-- `providers/` → knows about: nothing (leaf nodes)
+- `providers/` → knows about: `patterns/`
+- `patterns/` → knows about: nothing (pure data, leaf node)
+- `internal/version/` → knows about: nothing
 - **No circular dependencies.** Each layer only looks down.
 
 ### App Container Pattern
@@ -83,7 +89,7 @@ MCP uses JSON-RPC 2.0 over stdin/stdout. The scanner's key interaction:
 
 ## Detection Capabilities
 
-### Source Code SAST (providers/sast.go)
+### Source Code SAST (providers/sast.go + patterns/)
 Pattern-based analysis for Python, JavaScript/TypeScript, and Go:
 - Command injection: `os.popen`, `subprocess(shell=True)`, `child_process.exec/execSync`, `exec.Command`
 - Code eval: `eval()`, `exec()`, `new Function()`, `vm.runInNewContext`
