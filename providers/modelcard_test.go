@@ -71,13 +71,13 @@ func TestModelCardChecker_Fixtures(t *testing.T) {
 			wantSeverity: providers.SeverityWarning,
 		},
 		{
-			name:         "empty file flagged WARNING",
+			name:         "empty file flagged WARNING with empty rule id",
 			fixture:      "malicious/empty.md",
-			wantRule:     "aibom-modelcard-malformed-yaml",
+			wantRule:     "aibom-modelcard-empty",
 			wantSeverity: providers.SeverityWarning,
 		},
 		{
-			name:         "yaml-only malformed flagged WARNING",
+			name:         "yaml-only malformed flagged WARNING with malformed-yaml id",
 			fixture:      "malicious/model_card.yaml",
 			wantRule:     "aibom-modelcard-malformed-yaml",
 			wantSeverity: providers.SeverityWarning,
@@ -141,7 +141,7 @@ func TestModelCardChecker_PoisonedCardDelegatesToRuleMatcher(t *testing.T) {
 			{Rule: "mcp-tool-poisoning", Severity: providers.SeverityCritical, Message: "stubbed match"},
 		},
 	}
-	c := providers.NewModelCardCheckerWithRuleMatcher(stub)
+	c := providers.NewModelCardChecker(providers.WithModelCardCheckerRuleMatcher(stub))
 
 	path := filepath.Join("..", "testdata", "aibom", "modelcard", "malicious", "poisoned_card.md")
 	findings := c.CheckFile(path)
@@ -206,8 +206,8 @@ func TestModelCardChecker_FileTooLargeRefused(t *testing.T) {
 
 	c := providers.NewModelCardChecker()
 	findings := c.CheckFile(path)
-	if !findRuleAndSeverity(findings, "aibom-modelcard-malformed-yaml", providers.SeverityWarning) {
-		t.Errorf("expected oversize file to fire malformed-yaml WARNING, got: %+v", findings)
+	if !findRuleAndSeverity(findings, "aibom-modelcard-too-large", providers.SeverityWarning) {
+		t.Errorf("expected oversize file to fire too-large WARNING, got: %+v", findings)
 	}
 }
 
@@ -475,19 +475,281 @@ base_model: bert
 	findings := c.CheckDirectory(dir)
 
 	// Exactly one clean finding from the visible README. The excluded README
-	// is empty and would have fired malformed-yaml WARNING — its absence
+	// is empty and would have fired the empty-card WARNING — its absence
 	// proves the exclusion fired.
 	cleanCount := 0
 	for _, f := range findings {
 		if f.Rule == "aibom-modelcard-clean" {
 			cleanCount++
 		}
-		if f.Rule == "aibom-modelcard-malformed-yaml" {
+		if f.Rule == "aibom-modelcard-empty" {
 			t.Errorf("excluded directory should not have been scanned; got: %+v", f)
 		}
 	}
 	if cleanCount != 1 {
 		t.Errorf("expected exactly 1 clean finding from visible README, got %d", cleanCount)
+	}
+}
+
+// ── rule-id split: too-large / empty / malformed-yaml are distinct ─────────
+//
+// Day 6 review feedback: the previous implementation funnelled all three
+// signals through aibom-modelcard-malformed-yaml, which made user-facing
+// triage impossible ("did the file fail to parse, or is it just large?").
+// These tests lock the split.
+
+func TestModelCardChecker_TooLarge_FiresOwnRule(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "huge.md")
+	if err := os.WriteFile(path, []byte(strings.Repeat("a", 2*1024*1024)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := providers.NewModelCardChecker()
+	findings := c.CheckFile(path)
+
+	if !findRuleAndSeverity(findings, "aibom-modelcard-too-large", providers.SeverityWarning) {
+		t.Errorf("oversize card should fire aibom-modelcard-too-large; got: %+v", findings)
+	}
+	for _, f := range findings {
+		if f.Rule == "aibom-modelcard-malformed-yaml" {
+			t.Errorf("oversize card should NOT also fire malformed-yaml; got: %+v", f)
+		}
+		if f.Rule == "aibom-modelcard-empty" {
+			t.Errorf("oversize card should NOT fire empty; got: %+v", f)
+		}
+	}
+}
+
+func TestModelCardChecker_Empty_FiresOwnRule(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "README.md")
+	if err := os.WriteFile(path, []byte{}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := providers.NewModelCardChecker()
+	findings := c.CheckFile(path)
+
+	if !findRuleAndSeverity(findings, "aibom-modelcard-empty", providers.SeverityWarning) {
+		t.Errorf("empty card should fire aibom-modelcard-empty; got: %+v", findings)
+	}
+	for _, f := range findings {
+		if f.Rule == "aibom-modelcard-malformed-yaml" {
+			t.Errorf("empty card should NOT fire malformed-yaml; got: %+v", f)
+		}
+		if f.Rule == "aibom-modelcard-too-large" {
+			t.Errorf("empty card should NOT fire too-large; got: %+v", f)
+		}
+	}
+}
+
+func TestModelCardChecker_MalformedYAML_FiresOwnRule(t *testing.T) {
+	// A real YAML parse failure — must emit malformed-yaml ONLY, not the
+	// too-large or empty signals.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "README.md")
+	body := `---
+license: [unclosed list
+base_model: bert
+---
+# Broken
+`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := providers.NewModelCardChecker()
+	findings := c.CheckFile(path)
+
+	if !findRuleAndSeverity(findings, "aibom-modelcard-malformed-yaml", providers.SeverityWarning) {
+		t.Errorf("malformed YAML should fire malformed-yaml; got: %+v", findings)
+	}
+	for _, f := range findings {
+		if f.Rule == "aibom-modelcard-too-large" {
+			t.Errorf("malformed YAML should NOT fire too-large; got: %+v", f)
+		}
+		if f.Rule == "aibom-modelcard-empty" {
+			t.Errorf("malformed YAML should NOT fire empty; got: %+v", f)
+		}
+	}
+}
+
+// ── tightened bodyMentionsSource: bare github.com no longer suppresses ──────
+
+func TestModelCardChecker_BareGithubLinkDoesNotSuppressNoSource(t *testing.T) {
+	// Day 6 review: previously any `github.com/` URL satisfied the source
+	// check, so a card with a bare "follow me on GitHub" link was treated
+	// as having declared provenance. The tightened check requires either a
+	// section heading or a HuggingFace / arXiv path.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "README.md")
+	body := `---
+license: mit
+---
+# Sneaky Card
+
+A model with a github.com/somebody/blog link but no real provenance.
+`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := providers.NewModelCardChecker()
+	findings := c.CheckFile(path)
+
+	if !findRule(findings, "aibom-modelcard-no-source") {
+		t.Errorf("bare github.com link should NOT suppress no-source; got: %+v", findings)
+	}
+}
+
+func TestModelCardChecker_HuggingFaceModelPathSuppressesNoSource(t *testing.T) {
+	// A HuggingFace model URL like huggingface.co/meta-llama/Llama-2-7b is
+	// a real source signal — must suppress no-source.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "README.md")
+	body := `---
+license: mit
+---
+# HF Card
+
+Built on top of huggingface.co/meta-llama/Llama-2-7b.
+`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := providers.NewModelCardChecker()
+	findings := c.CheckFile(path)
+
+	for _, f := range findings {
+		if f.Rule == "aibom-modelcard-no-source" {
+			t.Errorf("huggingface model path should suppress no-source; got: %+v", f)
+		}
+	}
+}
+
+func TestModelCardChecker_HuggingFaceDatasetPathSuppressesNoSource(t *testing.T) {
+	// A HuggingFace datasets URL is a real source signal.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "README.md")
+	body := `---
+license: mit
+---
+# Dataset Card
+
+Trained on huggingface.co/datasets/openassistant/oasst1.
+`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := providers.NewModelCardChecker()
+	findings := c.CheckFile(path)
+
+	for _, f := range findings {
+		if f.Rule == "aibom-modelcard-no-source" {
+			t.Errorf("huggingface datasets path should suppress no-source; got: %+v", f)
+		}
+	}
+}
+
+func TestModelCardChecker_HuggingFaceSpacesPathDoesNotSuppress(t *testing.T) {
+	// huggingface.co/spaces/ is NOT a model-source signal — it points at a
+	// HuggingFace Space (a UI demo), not a base model or dataset.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "README.md")
+	body := `---
+license: mit
+---
+# Spaces Card
+
+Try the demo at huggingface.co/spaces/some-org/some-demo.
+`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := providers.NewModelCardChecker()
+	findings := c.CheckFile(path)
+
+	if !findRule(findings, "aibom-modelcard-no-source") {
+		t.Errorf("huggingface spaces path should NOT suppress no-source; got: %+v", findings)
+	}
+}
+
+func TestModelCardChecker_PaperswithcodeAndKaggleNoLongerSuppress(t *testing.T) {
+	// Day 6 review: paperswithcode.com / kaggle.com/datasets were too
+	// permissive — drop them. A bare paperswithcode link must NOT satisfy
+	// the source check.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "README.md")
+	body := `---
+license: mit
+---
+# Permissive
+
+See benchmarks at paperswithcode.com/sota/something and the data on
+kaggle.com/datasets/foo/bar.
+`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := providers.NewModelCardChecker()
+	findings := c.CheckFile(path)
+
+	if !findRule(findings, "aibom-modelcard-no-source") {
+		t.Errorf("paperswithcode/kaggle links should NOT suppress no-source; got: %+v", findings)
+	}
+}
+
+// ── defer recover() panic safety ────────────────────────────────────────────
+
+// panicRuleMatcher is a RuleMatcher that panics on every ScanDescription
+// call. It exercises the deferred recover() in checkFile so that a panic
+// inside body-injection scanning does NOT take down the scanner.
+type panicRuleMatcher struct{}
+
+func (panicRuleMatcher) ScanDescription(string) []providers.Finding {
+	panic("synthetic panic from rule matcher")
+}
+
+func (panicRuleMatcher) ScanArguments(map[string]any) []providers.Finding { return nil }
+func (panicRuleMatcher) ScanResponse(string) []providers.Finding          { return nil }
+func (panicRuleMatcher) ClassifyTool(providers.MCPTool, string) providers.RiskTier {
+	return providers.RiskTierLow
+}
+
+var _ providers.RuleMatcher = (*panicRuleMatcher)(nil)
+
+func TestModelCardChecker_PanicInRuleMatcherIsRecovered(t *testing.T) {
+	// A panic inside ScanDescription must NOT propagate out of CheckFile.
+	// The deferred recover() emits a malformed-yaml WARNING so the panic is
+	// at least visible to the user.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "README.md")
+	body := `---
+license: mit
+base_model: bert
+---
+# Card With Body
+
+Some prose so the body-scan path is reached.
+`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := providers.NewModelCardChecker(
+		providers.WithModelCardCheckerRuleMatcher(panicRuleMatcher{}),
+	)
+
+	// Sanity: must not panic.
+	findings := c.CheckFile(path)
+
+	if !findRuleAndSeverity(findings, "aibom-modelcard-malformed-yaml", providers.SeverityWarning) {
+		t.Errorf("panic should surface as malformed-yaml WARNING; got: %+v", findings)
 	}
 }
 

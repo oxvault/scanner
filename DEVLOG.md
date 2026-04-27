@@ -1,5 +1,44 @@
 # Scanner Development Log
 
+## Day 6 — Model card checker — 2026-04-27
+
+Branch: `feat/aibom-day6-modelcard`
+
+### What shipped
+- `providers/modelcard.go` — `ModelCardChecker` provider that inspects HuggingFace / OpenSSF model cards (`README.md`, `MODEL_CARD.md`, `model_card.yaml`, `.modelcard.yaml`)
+- YAML frontmatter splitter with BOM tolerance, CRLF tolerance, and unbalanced-opener detection
+- Body-injection scanning is delegated to the existing `RuleMatcher.ScanDescription` (no duplicate pattern lists in the model-card layer) — the same detector that scans MCP tool descriptions catches prompt-injection in card markdown
+- Cross-file aggregation lives in `AIBOMComposer.Scan()`: any directory containing a model artifact (`.pkl` / `.pt` / `.onnx` / `.safetensors`) without a model card alongside it emits `aibom-modelcard-missing` end-to-end on real `oxvault scan` invocations
+- `bodyMentionsSource` requires HuggingFace dataset/model paths, arXiv refs, or section headers — bare `github.com/` / `paperswithcode.com/` / `kaggle.com/` no longer suppresses the no-source rule (was too permissive)
+- `defer recover()` in `checkFile` for parity with `onnx.go` / `pickle.go` — a panic during YAML unmarshal or RuleMatcher dispatch surfaces as a `aibom-modelcard-malformed-yaml` WARNING instead of crashing the scanner
+
+### Rule IDs (post review-split)
+| Rule | Severity | Trigger |
+| --- | --- | --- |
+| `aibom-modelcard-clean` | INFO | all checks passed |
+| `aibom-modelcard-no-license` | WARNING | no license declared |
+| `aibom-modelcard-no-source` | WARNING | no provenance declared |
+| `aibom-modelcard-no-eval` | INFO | uncited benchmark claim |
+| `aibom-modelcard-suspicious-instructions` | HIGH | prompt-injection in body |
+| `aibom-modelcard-malformed-yaml` | WARNING | YAML parse failure |
+| `aibom-modelcard-too-large` | WARNING | exceeds `MaxModelCardFileBytes` (1 MiB) |
+| `aibom-modelcard-empty` | WARNING | zero-byte file |
+| `aibom-modelcard-missing` | WARNING | artifact directory has no card |
+
+### Key design decisions
+- **Dependency:** `gopkg.in/yaml.v3` (already in scanner go.mod for other YAML use)
+- **RuleMatcher delegation:** model-card checker accepts an injected `RuleMatcher` via `WithModelCardCheckerRuleMatcher`, falling back to a fresh `NewRuleMatcher()`. Composer can share its RuleMatcher across providers for consistent detection state.
+- **Missing-card aggregation in composer:** the previous design had `CheckDirectory` aggregate, but the composer dispatches per-file via `WalkScanFiles` and never called `CheckDirectory` — the rule was dead in production. Aggregation now lives in `composer.Scan` and uses a shared `missingCardFindings` helper so `CheckDirectory` (still on the interface for direct callers) stays consistent.
+- **Rule-ID split:** review fix — `malformed-yaml` was overloaded with too-large + empty signals. Split into three distinct rule IDs so users can filter "this card is just oversized" from "this card has a YAML parse error" from "this card is empty".
+
+### Files
+- `providers/modelcard.go` (new + this PR's edits)
+- `providers/aibom_composer.go` (composer drives missing-card aggregation)
+- `providers/modelcard_test.go` (rule-ID split tests, panic-recovery test, tightened `bodyMentionsSource` tests)
+- `providers/aibom_composer_test.go` (end-to-end missing-card integration tests)
+- `patterns/aibom.go` (model-card constants and regexes)
+- `testdata/aibom/modelcard/` (safe + malicious fixtures)
+
 ## v0.3.3 — 2026-03-27
 
 ### Patterns package

@@ -28,6 +28,18 @@ import (
 // so any injection patterns hidden in the markdown are caught by the same
 // detector that scans MCP tool descriptions.
 //
+// Rule ID table (kept in sync with the implementation below):
+//
+//	aibom-modelcard-clean                    INFO     all checks passed
+//	aibom-modelcard-no-license               WARNING  no license declared
+//	aibom-modelcard-no-source                WARNING  no provenance declared
+//	aibom-modelcard-no-eval                  INFO     uncited benchmark claim
+//	aibom-modelcard-suspicious-instructions  HIGH     prompt-injection in body
+//	aibom-modelcard-malformed-yaml           WARNING  YAML frontmatter parse failure
+//	aibom-modelcard-too-large                WARNING  exceeds MaxModelCardFileBytes
+//	aibom-modelcard-empty                    WARNING  zero-byte file
+//	aibom-modelcard-missing                  WARNING  artifact directory has no card
+//
 // Layer rule: providers/ depends on patterns/ only. RuleMatcher is reused via
 // the existing provider interface (no cross-package state).
 
@@ -50,7 +62,8 @@ func WithModelCardCheckerRuleMatcher(rm RuleMatcher) ModelCardCheckerOption {
 }
 
 // NewModelCardChecker returns a production ModelCardChecker wired with a
-// default RuleMatcher. Equivalent to NewModelCardCheckerWithRuleMatcher(nil).
+// default RuleMatcher. Pass WithModelCardCheckerRuleMatcher to share an
+// existing RuleMatcher (e.g. from the composer) instead.
 func NewModelCardChecker(opts ...ModelCardCheckerOption) ModelCardChecker {
 	m := &modelCardChecker{}
 	for _, opt := range opts {
@@ -60,19 +73,6 @@ func NewModelCardChecker(opts ...ModelCardCheckerOption) ModelCardChecker {
 		m.rules = NewRuleMatcher()
 	}
 	return m
-}
-
-// NewModelCardCheckerWithRuleMatcher returns a ModelCardChecker that delegates
-// body scans to the supplied RuleMatcher. Passing nil installs the default.
-//
-// This is the canonical factory for callers (e.g. the AIBOM composer) that
-// want to share a RuleMatcher across providers — keeping detection state and
-// pattern compilation in a single place.
-func NewModelCardCheckerWithRuleMatcher(rm RuleMatcher) ModelCardChecker {
-	if rm == nil {
-		return NewModelCardChecker()
-	}
-	return NewModelCardChecker(WithModelCardCheckerRuleMatcher(rm))
 }
 
 // CheckFile inspects a single model-card file at path. Returns one Finding
@@ -85,10 +85,13 @@ func (m *modelCardChecker) CheckFile(path string) []Finding {
 	return m.checkFile(path)
 }
 
-// CheckDirectory walks dir and checks every model card file it finds. The
-// composer owns directory walking in production, so this method is rarely
-// called — but keeping it functional satisfies the interface and makes the
-// checker usable standalone.
+// CheckDirectory walks dir and checks every model card file it finds. In
+// production the AIBOMComposer owns directory walking and aggregates the
+// missing-card signal across all sub-providers (so the rule fires on real
+// `oxvault scan ./model-dir` invocations even when the composer dispatches
+// per-file). This method is preserved for callers that use the checker
+// standalone — it produces the same findings, so behaviour is identical
+// regardless of entry point.
 //
 // In addition to per-file checks, this method emits a single
 // aibom-modelcard-missing WARNING for any directory that contains a model
@@ -128,17 +131,33 @@ func (m *modelCardChecker) CheckDirectory(dir string) []Finding {
 	// missing-card warning. Do NOT emit when the directory only contains
 	// non-artifact files — this is a provenance signal scoped to model
 	// directories.
+	findings = append(findings, missingCardFindings(hasArtifact, hasCard)...)
+	return findings
+}
+
+// missingCardFindings emits one aibom-modelcard-missing WARNING per directory
+// that contains a model artifact but no model card. Pulled out as a helper so
+// both the standalone CheckDirectory entry point AND the AIBOM composer can
+// share identical aggregation logic.
+//
+// The two map arguments are keyed by parent-directory path. A directory is
+// treated as missing a card when it appears in hasArtifact but NOT in hasCard.
+// Order is map-iteration order, which is fine for findings — the reporter
+// sorts before output.
+func missingCardFindings(hasArtifact, hasCard map[string]bool) []Finding {
+	var findings []Finding
 	for parent := range hasArtifact {
-		if !hasCard[parent] {
-			findings = append(findings, Finding{
-				Rule:            "aibom-modelcard-missing",
-				Severity:        SeverityWarning,
-				Confidence:      ConfidenceHigh,
-				ConfidenceLabel: ConfidenceHigh.String(),
-				File:            parent,
-				Message:         "directory contains model artifacts but no model card (README.md / MODEL_CARD.md) — provenance is missing",
-			})
+		if hasCard[parent] {
+			continue
 		}
+		findings = append(findings, Finding{
+			Rule:            "aibom-modelcard-missing",
+			Severity:        SeverityWarning,
+			Confidence:      ConfidenceHigh,
+			ConfidenceLabel: ConfidenceHigh.String(),
+			File:            parent,
+			Message:         "directory contains model artifacts but no model card (README.md / MODEL_CARD.md) — provenance is missing",
+		})
 	}
 	return findings
 }
@@ -151,7 +170,30 @@ func (m *modelCardChecker) CheckDirectory(dir string) []Finding {
 // All checks run in a single pass against an in-memory copy of the file. The
 // file is bounded by patterns.MaxModelCardFileBytes to refuse pathological
 // inputs.
-func (m *modelCardChecker) checkFile(path string) []Finding {
+//
+// The named return is load-bearing: the deferred recover() below appends a
+// finding to it on panic. Without the named return, an explicit `return ...`
+// would have already evaluated by the time the recover runs, causing the
+// panic-derived finding to be silently dropped (lesson from Day 5 onnx).
+func (m *modelCardChecker) checkFile(path string) (findings []Finding) {
+	// Defensive: yaml.Unmarshal and UTF-8 helpers must NEVER take down the
+	// scanner. Mirrors the recover() pattern used by onnx.go and pickle.go.
+	// On panic we surface a malformed-yaml WARNING so the caller can still
+	// see something happened, rather than silently swallowing the input.
+	defer func() {
+		if r := recover(); r != nil {
+			findings = []Finding{{
+				Rule:            "aibom-modelcard-malformed-yaml",
+				Severity:        SeverityWarning,
+				Confidence:      ConfidenceHigh,
+				ConfidenceLabel: ConfidenceHigh.String(),
+				File:            path,
+				Message:         fmt.Sprintf("panic during model card scan: %v", r),
+				CWE:             "CWE-20",
+			}}
+		}
+	}()
+
 	f, err := os.Open(path) //nolint:gosec // path comes from filesystem walks scoped to the scan target.
 	if err != nil {
 		return nil
@@ -166,10 +208,11 @@ func (m *modelCardChecker) checkFile(path string) []Finding {
 
 	// Refuse oversize files outright. Real model cards are <100 KiB; anything
 	// >1 MiB is either generated noise or an attempt to drown the body
-	// scanner in irrelevant text.
+	// scanner in irrelevant text. Distinct rule id keeps "size cap exceeded"
+	// from being conflated with actual YAML parse failures.
 	if fileSize > patterns.MaxModelCardFileBytes {
 		return []Finding{{
-			Rule:            "aibom-modelcard-malformed-yaml",
+			Rule:            "aibom-modelcard-too-large",
 			Severity:        SeverityWarning,
 			Confidence:      ConfidenceHigh,
 			ConfidenceLabel: ConfidenceHigh.String(),
@@ -188,11 +231,12 @@ func (m *modelCardChecker) checkFile(path string) []Finding {
 		return nil
 	}
 
-	// Empty file — fail-fast with the malformed-yaml signal so reports never
-	// silently pass an empty card.
+	// Empty file — fail-fast with a dedicated rule id so reports never
+	// silently pass an empty card AND so users can filter "empty" from
+	// "malformed" and "oversize" independently.
 	if len(data) == 0 {
 		return []Finding{{
-			Rule:            "aibom-modelcard-malformed-yaml",
+			Rule:            "aibom-modelcard-empty",
 			Severity:        SeverityWarning,
 			Confidence:      ConfidenceHigh,
 			ConfidenceLabel: ConfidenceHigh.String(),
@@ -594,8 +638,19 @@ func isNonEmptyYAMLValue(v any) bool {
 }
 
 // bodyMentionsSource returns true when the markdown body mentions a base
-// model or training data source via either a section heading or an inline
-// link to a known model registry (HuggingFace, GitHub, arXiv).
+// model or training data source via a section heading or a sufficiently
+// specific inline registry path.
+//
+// We deliberately do NOT accept a bare `github.com/` or `paperswithcode.com/`
+// match — those domains appear in legitimate, unrelated card content (badge
+// links, "follow me on github", citations to library repos). Accepting them
+// turned the no-source rule into a near-noop. Instead we require:
+//
+//   - a section heading like `## Base model` / `## Training data` / `## Source`
+//   - a HuggingFace dataset path (`huggingface.co/datasets/...`)
+//   - a HuggingFace model path (`huggingface.co/<org>/<model>` — at least one slash
+//     after the domain that does NOT belong to /datasets|/spaces|/papers/)
+//   - an arXiv paper reference
 func bodyMentionsSource(body string) bool {
 	lower := strings.ToLower(body)
 	// Section headings like "## Base model", "## Training data", "## Source".
@@ -612,20 +667,78 @@ func bodyMentionsSource(body string) bool {
 			return true
 		}
 	}
-	// Inline registry links — any of these is sufficient evidence.
-	registries := []string{
-		"huggingface.co/",
-		"github.com/",
-		"arxiv.org/",
-		"paperswithcode.com/",
-		"kaggle.com/datasets",
+	// HuggingFace dataset paths are unambiguous source signals.
+	if strings.Contains(lower, "huggingface.co/datasets/") {
+		return true
 	}
-	for _, r := range registries {
-		if strings.Contains(lower, r) {
+	// arXiv references are unambiguous source signals.
+	if strings.Contains(lower, "arxiv.org/") {
+		return true
+	}
+	// HuggingFace model paths are accepted when they look like `<org>/<model>`.
+	// We exclude /datasets/, /spaces/, /papers/, /docs/, /blog/ — those are
+	// legitimate URLs but don't identify a base model.
+	if hasHuggingFaceModelPath(lower) {
+		return true
+	}
+	return false
+}
+
+// hasHuggingFaceModelPath returns true when body contains a `huggingface.co/`
+// URL whose first path segment is NOT one of the non-model surfaces (datasets,
+// spaces, papers, docs, blog) AND has at least one further `/<model>` segment.
+//
+// The check is deliberately permissive on the model name (any non-empty path
+// segment) — HuggingFace model IDs include hyphens, digits, dots, and
+// underscores, and a strict regex would lock out legitimate cards.
+func hasHuggingFaceModelPath(lower string) bool {
+	const host = "huggingface.co/"
+	idx := 0
+	for {
+		hit := strings.Index(lower[idx:], host)
+		if hit < 0 {
+			return false
+		}
+		afterHost := lower[idx+hit+len(host):]
+		// First path segment.
+		seg, rest := splitFirstPathSegment(afterHost)
+		idx += hit + len(host)
+		if seg == "" {
+			continue
+		}
+		switch seg {
+		case "datasets", "spaces", "papers", "docs", "blog":
+			// Non-model surface — keep scanning for another match.
+			continue
+		}
+		// Need at least one more non-empty segment to look like `<org>/<model>`.
+		next, _ := splitFirstPathSegment(rest)
+		if next != "" {
 			return true
 		}
 	}
-	return false
+}
+
+// splitFirstPathSegment returns the first path segment from s (up to the next
+// `/`, ` `, `)`, or end-of-string) and the remainder. The remainder excludes
+// the leading `/` so callers can recurse cleanly.
+func splitFirstPathSegment(s string) (string, string) {
+	end := len(s)
+	for i, r := range s {
+		if r == '/' || r == ' ' || r == ')' || r == '\n' || r == '\t' || r == '"' || r == '\'' {
+			end = i
+			break
+		}
+	}
+	seg := s[:end]
+	if end >= len(s) {
+		return seg, ""
+	}
+	rest := s[end:]
+	if len(rest) > 0 && rest[0] == '/' {
+		rest = rest[1:]
+	}
+	return seg, rest
 }
 
 // walkYAMLStrings invokes fn for every string-valued leaf in v. Maps and
