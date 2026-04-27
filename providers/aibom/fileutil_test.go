@@ -114,3 +114,49 @@ func TestDetectArtifactFormat_EmptyFileWithUnknownExt(t *testing.T) {
 		t.Errorf("expected FormatUnknown for empty file, got %q", got)
 	}
 }
+
+// TestDetectArtifactFormat_TorchExtMissingMagic verifies that a file with a
+// torch-checkpoint extension but NO pickle magic byte is reported as
+// FormatUnknown rather than mis-routed to the pickle disassembler. This is
+// the regression test for the dead-branch fix in the .pt/.pth/.bin/.ckpt
+// extension switch.
+func TestDetectArtifactFormat_TorchExtMissingMagic(t *testing.T) {
+	tests := []struct {
+		name     string
+		filename string
+	}{
+		{"pt with text content", "fake.pt"},
+		{"pth with text content", "fake.pth"},
+		{"bin with text content", "fake.bin"},
+		{"ckpt with text content", "fake.ckpt"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, tt.filename)
+			// "Hello world" — neither pickle nor zip magic.
+			if err := os.WriteFile(path, []byte("Hello world\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if got := aibom.DetectArtifactFormat(path); got != providers.FormatUnknown {
+				t.Errorf("expected FormatUnknown for non-pickle %s, got %q", tt.filename, got)
+			}
+		})
+	}
+}
+
+// TestDetectArtifactFormat_TorchExtZipMagic verifies that ZIP-wrapped torch
+// checkpoints (the standard PyTorch save format since 1.6) are still
+// classified as pickle so the analyser unwraps them.
+func TestDetectArtifactFormat_TorchExtZipMagic(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "model.pt")
+	// PK\x03\x04 — local-file-header signature.
+	if err := os.WriteFile(path, []byte{'P', 'K', 0x03, 0x04, 0x00}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := aibom.DetectArtifactFormat(path); got != providers.FormatPickle {
+		t.Errorf("expected FormatPickle for ZIP-wrapped .pt, got %q", got)
+	}
+}

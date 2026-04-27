@@ -37,6 +37,8 @@ const (
 	maxStackSize      = 200_000
 	maxRecursionDepth = 4
 	maxByteArg        = 1 << 30 // 1 GiB cap on any single length-prefixed arg
+	maxFileBytes      = 1 << 31 // 2 GiB cap on the outer pickle file read
+	maxInnerPickles   = 16      // Max pickle entries we descend into per ZIP archive
 )
 
 // pickleAnalyzer is the production PickleAnalyzer. It is stateless — every
@@ -83,24 +85,79 @@ func (p *pickleAnalyzer) AnalyzeDirectory(dir string) []providers.Finding {
 	return findings
 }
 
-// analyzeFile is the actual entry point. depth guards against pathological
-// nested ZIP-wrapped pickles.
+// analyzeFile is the actual entry point. It opens the file, applies the
+// outer-file size cap via io.LimitReader, and then dispatches to analyzeBytes
+// which enforces the recursion-depth guard for every code path (file → zip →
+// inner pickle).
 func analyzeFile(path string, depth int) []providers.Finding {
-	if depth > maxRecursionDepth {
-		return nil
-	}
-
-	data, err := os.ReadFile(path) //nolint:gosec // path is filesystem-walk scoped to the scan target.
+	f, err := os.Open(path) //nolint:gosec // path is filesystem-walk scoped to the scan target.
 	if err != nil {
 		return nil
 	}
+	defer func() { _ = f.Close() }()
+
+	// Bounded read: peek one extra byte so we can detect oversize files.
+	limited := io.LimitReader(f, int64(maxFileBytes)+1)
+	data, err := io.ReadAll(limited)
+	if err != nil {
+		return nil
+	}
+
+	if int64(len(data)) > int64(maxFileBytes) {
+		return []providers.Finding{{
+			Rule:            "aibom-pickle-truncated",
+			Severity:        providers.SeverityWarning,
+			Confidence:      providers.ConfidenceHigh,
+			ConfidenceLabel: providers.ConfidenceHigh.String(),
+			File:            path,
+			Message: fmt.Sprintf(
+				"pickle file exceeds %d-byte safety cap — disassembly skipped",
+				maxFileBytes),
+			CWE: "CWE-1287",
+		}}
+	}
+
 	return analyzeBytes(path, data, depth)
 }
 
-// analyzeBytes inspects a byte slice. It first tests the ZIP magic header
-// (PyTorch zip-wrapped pickles); if matched, it descends into the archive
-// and analyses the embedded data.pkl entry.
-func analyzeBytes(path string, data []byte, depth int) []providers.Finding {
+// analyzeBytes inspects a byte slice. It first enforces maxRecursionDepth so
+// that ZIP-wrapped pickles cannot bypass the guard via repeated zip → pickle
+// recursion, then tests the ZIP magic header (PyTorch zip-wrapped pickles); if
+// matched, it descends into the archive and analyses the embedded data.pkl
+// entry.
+//
+// A defer recover() wraps every ZIP path because Go's archive/zip stdlib has
+// historically panicked on malformed inputs — defence in depth.
+func analyzeBytes(path string, data []byte, depth int) (findings []providers.Finding) {
+	if depth > maxRecursionDepth {
+		return []providers.Finding{{
+			Rule:            "aibom-pickle-truncated",
+			Severity:        providers.SeverityWarning,
+			Confidence:      providers.ConfidenceHigh,
+			ConfidenceLabel: providers.ConfidenceHigh.String(),
+			File:            path,
+			Message: fmt.Sprintf(
+				"pickle recursion depth %d exceeded — refusing to descend further",
+				maxRecursionDepth),
+			CWE: "CWE-1287",
+		}}
+	}
+
+	defer func() {
+		// Defensive: a malformed ZIP must NEVER take down the scanner.
+		if r := recover(); r != nil {
+			findings = append(findings, providers.Finding{
+				Rule:            "aibom-pickle-truncated",
+				Severity:        providers.SeverityWarning,
+				Confidence:      providers.ConfidenceHigh,
+				ConfidenceLabel: providers.ConfidenceHigh.String(),
+				File:            path,
+				Message:         fmt.Sprintf("panic during ZIP/pickle analysis: %v", r),
+				CWE:             "CWE-1287",
+			})
+		}
+	}()
+
 	if isZipArchive(data) {
 		return analyzeZip(path, data, depth)
 	}
@@ -144,12 +201,31 @@ func analyzeZip(path string, data []byte, depth int) []providers.Finding {
 		},
 	}
 
+	innerCount := 0
 	for _, f := range zr.File {
 		base := filepath.Base(f.Name)
 		// Only analyse pickle entries — usually exactly "data.pkl".
 		if base != "data.pkl" && !strings.HasSuffix(strings.ToLower(base), ".pkl") {
 			continue
 		}
+		if innerCount >= maxInnerPickles {
+			// Quadratic-DoS guard: refuse to expand more than maxInnerPickles
+			// pickle entries from a single archive. A real PyTorch zip never
+			// contains more than a handful.
+			findings = append(findings, providers.Finding{
+				Rule:            "aibom-pickle-truncated",
+				Severity:        providers.SeverityWarning,
+				Confidence:      providers.ConfidenceHigh,
+				ConfidenceLabel: providers.ConfidenceHigh.String(),
+				File:            path,
+				Message: fmt.Sprintf(
+					"PyTorch ZIP archive contains more than %d pickle entries — analysis halted",
+					maxInnerPickles),
+				CWE: "CWE-1287",
+			})
+			break
+		}
+		innerCount++
 		rc, openErr := f.Open()
 		if openErr != nil {
 			continue
@@ -161,8 +237,8 @@ func analyzeZip(path string, data []byte, depth int) []providers.Finding {
 			continue
 		}
 		// Build a virtual path that points at the inner entry for clearer findings.
-		inner_path := path + "::" + f.Name
-		findings = append(findings, analyzeBytes(inner_path, inner, depth+1)...)
+		innerPath := path + "::" + f.Name
+		findings = append(findings, analyzeBytes(innerPath, inner, depth+1)...)
 	}
 
 	return findings
@@ -187,6 +263,12 @@ type disassembler struct {
 	// disassembler only uses the memo to track GLOBAL references survived
 	// through GET/BINGET so REDUCE can be correlated with its callable.
 	memo map[uint64]stackEntry
+
+	// nextMemoID is the next id assigned by MEMOIZE. It increments on every
+	// MEMOIZE (regardless of overwrites of existing ids by explicit BINPUT /
+	// LONG_BINPUT) so we never collide on auto-assigned ids — matching CPython
+	// pickle.py's Pickler.memoize() id-allocation semantics.
+	nextMemoID uint64
 
 	// found accumulates GLOBAL refs in order of appearance. Each ref records
 	// the byte offset where it was emitted plus whether REDUCE consumed it.
@@ -461,7 +543,11 @@ func (d *disassembler) step(op byte, opOffset int) error {
 		d.storeMemo(uint64(idx))
 	case opMEMOIZE:
 		// Memoize the topmost stack item under the next available memo id.
-		d.storeMemo(uint64(len(d.memo)))
+		// Use a monotonic counter rather than len(d.memo) — the latter would
+		// collide with ids previously written by BINPUT / LONG_BINPUT.
+		id := d.nextMemoID
+		d.nextMemoID++
+		d.storeMemo(id)
 
 	// ── containers / building ───────────────────────────────────────────────
 
@@ -559,9 +645,15 @@ func (d *disassembler) step(op byte, opOffset int) error {
 		d.push(stackEntry{kind: kindGlobal, qualified: qualified})
 
 	case opSTACK_GLOBAL:
-		// Pop name, pop module — both are kindString entries.
+		// Pop name, pop module — both must be kindString entries pushed by
+		// SHORT_BINUNICODE / BINUNICODE (or similar). If either is missing or
+		// of the wrong kind, the stream is malformed; refuse to synthesise a
+		// fake "." reference and let the truncation path emit a finding.
 		name := d.pop()
 		mod := d.pop()
+		if name.kind != kindString || mod.kind != kindString {
+			return errors.New("STACK_GLOBAL with malformed stack — name/module not kindString")
+		}
 		qualified := strings.TrimSpace(mod.qualified) + "." + strings.TrimSpace(name.qualified)
 		d.recordGlobal(qualified, opOffset)
 		d.push(stackEntry{kind: kindGlobal, qualified: qualified})
@@ -852,11 +944,14 @@ func classifyGlobal(path string, g globalRef) (providers.Finding, bool) {
 		}, true
 	}
 
-	// Medium tier — destructive filesystem.
+	// Medium tier — destructive filesystem. Filesystem destruction is
+	// concerning but not in the same league as RCE (Critical) or network
+	// egress (High); emit at WARNING to match the documented tier semantics
+	// in patterns/aibom.go.
 	if rationale, ok := patterns.DangerousGlobalsMedium[q]; ok {
 		return providers.Finding{
 			Rule:            "aibom-pickle-filesystem",
-			Severity:        providers.SeverityHigh,
+			Severity:        providers.SeverityWarning,
 			Confidence:      providers.ConfidenceMedium,
 			ConfidenceLabel: providers.ConfidenceMedium.String(),
 			File:            path,

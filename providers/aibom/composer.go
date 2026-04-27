@@ -2,7 +2,6 @@ package aibom
 
 import (
 	"os"
-	"path/filepath"
 
 	"github.com/oxvault/scanner/providers"
 )
@@ -93,21 +92,10 @@ func (c *composer) Scan(path string) []providers.Finding {
 	}
 
 	var findings []providers.Finding
-	_ = filepath.Walk(path, func(p string, fi os.FileInfo, walkErr error) error {
-		if walkErr != nil {
-			return nil
-		}
-		if fi.IsDir() {
-			if providers.IsExcludedDir(filepath.Base(p)) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if providers.IsExcludedFile(filepath.Base(p)) {
-			return nil
-		}
+	// Reuse the shared walker so directory/file exclusion stays consistent
+	// across providers (SAST, dep-audit, AIBOM). Symlinks are not followed.
+	_ = providers.WalkScanFiles(path, func(p string) {
 		findings = append(findings, c.dispatch(p)...)
-		return nil
 	})
 	return findings
 }

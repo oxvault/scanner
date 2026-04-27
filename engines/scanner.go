@@ -106,6 +106,18 @@ func (s *scanner) Scan(target string, opts ScanOptions) (*ScanReport, error) {
 	}
 	report.Package = pkg
 
+	// AIBOM dispatch is wired in Day 9 of the v0.4 milestone. The resolver
+	// already classifies model artifacts and directories, so we reject them
+	// here with a clear message rather than running MCP-server scanning over
+	// model weights (which would produce nonsense findings).
+	switch pkg.Kind {
+	case providers.KindModelArtifact, providers.KindModelDirectory:
+		return nil, fmt.Errorf(
+			"AIBOM scanning of %s lands in v0.4 — wire-up coming Day 9 (path=%q)",
+			pkg.Kind, pkg.Path,
+		)
+	}
+
 	// Step 2: Static analysis on source code
 	if !opts.SkipSAST {
 		s.logger.Info("running source code analysis", "path", pkg.Path)

@@ -450,23 +450,13 @@ func (s *safetensorsValidator) scanMetadata(path string, raw json.RawMessage) []
 			}
 		}
 
-		// Pickle magic bytes — defence in depth against pickle-in-safetensors.
-		for _, magic := range patterns.SafetensorsPickleMagicBytes {
-			if strings.Contains(v, magic) {
-				findings = append(findings, providers.Finding{
-					Rule:            "aibom-safetensors-suspicious-metadata",
-					Severity:        providers.SeverityWarning,
-					Confidence:      providers.ConfidenceMedium,
-					ConfidenceLabel: providers.ConfidenceMedium.String(),
-					File:            path,
-					Message: fmt.Sprintf(
-						"metadata key %q contains pickle protocol magic bytes (0x%X)",
-						k, magic),
-					CWE: "CWE-20",
-				})
-				break
-			}
-		}
+		// NOTE: pickle-magic bytes are deliberately NOT scanned here.
+		// JSON cannot encode raw 0x80 (invalid UTF-8) — the decoded string
+		// `v` will never contain "\x80\x02..." literally; an attacker is
+		// forced to use \uXXXX escapes which decode to UTF-8 sequences like
+		// "\xc2\x80\x02". Detection of the on-disk escaped form happens in
+		// scanRawHeaderForPickle (PRE-decode); a post-decode scan over `v`
+		// would be dead code, so it is omitted.
 	}
 	return findings
 }

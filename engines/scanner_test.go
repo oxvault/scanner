@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/oxvault/scanner/providers"
@@ -61,6 +62,47 @@ func TestScanner_Scan_ResolveError(t *testing.T) {
 	}
 	if resolver.CallCount.Load() != 1 {
 		t.Errorf("expected 1 resolve call, got %d", resolver.CallCount.Load())
+	}
+}
+
+// TestScanner_Scan_RejectsModelArtifactKind verifies that resolved packages
+// with PackageKind=KindModelArtifact / KindModelDirectory are rejected with
+// a clear "AIBOM scanning lands in v0.4 — wire-up coming Day 9" message.
+// MCP-server scanning over model weights would produce nonsense findings, so
+// the branch returns early before any sub-provider runs.
+func TestScanner_Scan_RejectsModelArtifactKind(t *testing.T) {
+	tests := []struct {
+		name string
+		kind providers.PackageKind
+	}{
+		{"model artifact", providers.KindModelArtifact},
+		{"model directory", providers.KindModelDirectory},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pkg := &providers.ResolvedPackage{
+				Path: "/tmp/weights.pkl",
+				Kind: tt.kind,
+				Name: "weights.pkl",
+			}
+			resolver := &testutil.MockResolver{ResolveResult: pkg}
+			sast := &testutil.MockSASTAnalyzer{}
+			eng := newTestScanner(resolver, &testutil.MockMCPClient{},
+				&testutil.MockRuleMatcher{}, sast, &testutil.MockReporter{})
+
+			_, err := eng.Scan("/tmp/weights.pkl", ScanOptions{})
+			if err == nil {
+				t.Fatal("expected error for model artifact kind, got nil")
+			}
+			if got := err.Error(); !strings.Contains(got, "AIBOM") || !strings.Contains(got, "Day 9") {
+				t.Errorf("expected AIBOM/Day 9 in error message, got: %v", err)
+			}
+			if sast.AnalyzeDirectoryCount.Load() != 0 {
+				t.Errorf("SAST must not run for model artifacts, got %d calls",
+					sast.AnalyzeDirectoryCount.Load())
+			}
+		})
 	}
 }
 

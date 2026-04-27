@@ -21,6 +21,12 @@ var (
 	// ONNX uses protobuf wire format. The standard top-level "ir_version" field
 	// is field number 1, varint type — encoded as 0x08. This is a heuristic.
 	onnxMagic = []byte{0x08}
+	// zipMagic is the local-file-header signature `PK\x03\x04`. PyTorch
+	// checkpoints saved with torch.save() since 1.6 are ZIP archives wrapping
+	// an inner data.pkl, so a .pt/.pth/.bin/.ckpt that begins with this magic
+	// is still a legitimate pickle artifact — it is unwrapped by the pickle
+	// analyser, not the safetensors validator.
+	zipMagic = []byte{'P', 'K', 0x03, 0x04}
 )
 
 // DetectArtifactFormat returns the ArtifactFormat for the given path based on
@@ -41,12 +47,25 @@ func DetectArtifactFormat(path string) providers.ArtifactFormat {
 	case ".pkl", ".pickle":
 		return providers.FormatPickle
 	case ".pt", ".pth", ".bin", ".ckpt":
-		// Torch checkpoints are pickle by default. Confirm via magic byte
-		// when the file is readable; otherwise trust the extension.
+		// Torch checkpoints are pickle by default. Require the pickle magic
+		// byte before classifying as pickle: an attacker who renames a non-
+		// pickle file (or a ZIP-wrapped torch checkpoint, which starts with
+		// "PK\x03\x04") to one of these extensions would otherwise be
+		// dispatched to the pickle disassembler with garbage input.
+		//
+		// ZIP-wrapped checkpoints are still recognised — the pickle analyser
+		// detects the ZIP magic and recurses into the inner data.pkl.
 		if hasMagicPrefix(path, pickleMagic) {
 			return providers.FormatPickle
 		}
-		return providers.FormatPickle
+		if hasMagicPrefix(path, zipMagic) {
+			return providers.FormatPickle
+		}
+		// Unreadable or non-matching magic — defer classification to the
+		// extensionless fallback below; if THAT also fails the file is
+		// reported as FormatUnknown rather than mis-routed to the pickle
+		// path.
+		return providers.FormatUnknown
 	case ".onnx":
 		return providers.FormatONNX
 	case ".safetensors":
