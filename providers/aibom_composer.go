@@ -2,6 +2,7 @@ package providers
 
 import (
 	"os"
+	"path/filepath"
 )
 
 // composer is the concrete AIBOMComposer. It walks the target path and
@@ -79,6 +80,13 @@ func NewComposer(opts ...ComposerOption) AIBOMComposer {
 // dispatches each file individually — sub-providers' AnalyzeDirectory /
 // ValidateDirectory / CheckDirectory methods are NOT called from here so
 // that the walk and exclusion rules are owned by the composer.
+//
+// Cross-file aggregation happens here, NOT in sub-providers:
+//
+//   - aibom-modelcard-missing fires per directory that contains a model
+//     artifact (.pkl/.pt/.onnx/.safetensors) but no model card alongside it.
+//     The composer tracks artifact + card directories during the walk and
+//     emits the missing-card finding once the walk completes.
 func (c *composer) Scan(path string) []Finding {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -90,11 +98,29 @@ func (c *composer) Scan(path string) []Finding {
 	}
 
 	var findings []Finding
+	// Cross-file aggregation: track which directories contain a model
+	// artifact and which contain a model card. After the walk we emit one
+	// aibom-modelcard-missing per artifact directory without a card. The
+	// per-directory CheckDirectory entry point on ModelCardChecker is NOT
+	// called — the composer owns the aggregation so it fires on every real
+	// `oxvault scan ./model-dir` invocation, not just direct CheckDirectory
+	// callers.
+	hasArtifact := map[string]bool{}
+	hasCard := map[string]bool{}
+
 	// Reuse the shared walker so directory/file exclusion stays consistent
 	// across providers (SAST, dep-audit, AIBOM). Symlinks are not followed.
 	_ = WalkScanFiles(path, func(p string) {
+		switch DetectArtifactFormat(p) {
+		case FormatPickle, FormatONNX, FormatSafetensors:
+			hasArtifact[filepath.Dir(p)] = true
+		case FormatModelCard:
+			hasCard[filepath.Dir(p)] = true
+		}
 		findings = append(findings, c.dispatch(p)...)
 	})
+
+	findings = append(findings, missingCardFindings(hasArtifact, hasCard)...)
 	return findings
 }
 

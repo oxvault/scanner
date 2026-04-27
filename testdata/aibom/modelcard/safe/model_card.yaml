@@ -1,0 +1,8 @@
+license: apache-2.0
+base_model: bert-base-uncased
+training_data: c4
+metrics:
+  - accuracy
+  - f1
+description: |
+  A YAML-only model card with no markdown body.

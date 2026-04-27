@@ -132,11 +132,32 @@ func DetectArtifactFormat(path string) ArtifactFormat {
 	return FormatUnknown
 }
 
-// isModelCardName returns true for documentation files that conventionally
-// serve as model cards in HuggingFace and PyTorch Hub repositories.
+// IsModelCardName returns true for documentation files that conventionally
+// serve as model cards in HuggingFace, OpenSSF, and PyTorch Hub repositories.
+//
+// Recognised forms:
+//
+//   - readme.md                    (HuggingFace default)
+//   - model_card.md / modelcard.md / model-card.md
+//   - model_card.yaml / modelcard.yaml / model-card.yaml (and .yml variants)
+//   - .modelcard.yaml / .modelcard.yml                   (dotted YAML form)
+//
+// The match is case-insensitive — callers should pass an already-lowercased
+// base, or rely on the lower-case copy this function makes internally.
+func IsModelCardName(base string) bool {
+	return isModelCardName(base)
+}
+
+// isModelCardName is the lowercase-internal worker. It is kept unexported so
+// callers within this package use the same path as DetectArtifactFormat
+// without a string-allocation round-trip.
 func isModelCardName(base string) bool {
 	switch base {
-	case "readme.md", "model_card.md", "modelcard.md", "model-card.md":
+	case "readme.md",
+		"model_card.md", "modelcard.md", "model-card.md",
+		"model_card.yaml", "modelcard.yaml", "model-card.yaml",
+		"model_card.yml", "modelcard.yml", "model-card.yml",
+		".modelcard.yaml", ".modelcard.yml":
 		return true
 	}
 	return false

@@ -1,5 +1,7 @@
 package patterns
 
+import "regexp"
+
 // AIBOM dangerous-globals catalog.
 //
 // These maps key on the fully-qualified Python name pushed onto the pickle
@@ -395,3 +397,103 @@ const MaxOnnxTensorElements uint64 = 256 * 1024 * 1024
 // vanishingly rare in practice and any pathological producer hitting this cap
 // would be smaller, so we fail closed with a malformed-protobuf finding.
 const MaxOnnxFileBytes int64 = 4 * 1024 * 1024 * 1024
+
+// ── model-card checker data ─────────────────────────────────────────────────
+//
+// These lists feed providers/modelcard.go. Pure data only — no behaviour.
+// Keeping them in patterns/ honours the project's layering rule:
+// providers/ depends on patterns/, never the reverse.
+
+// MaxModelCardFileBytes caps the on-disk size of a model-card document the
+// checker will read. Model cards are documentation — anything beyond 1 MiB is
+// almost certainly not a real card, so we refuse to read it.
+const MaxModelCardFileBytes int64 = 1 * 1024 * 1024
+
+// ModelCardLicenseKeys is the set of YAML frontmatter keys that legitimately
+// declare a model's license. Both US and UK spellings are accepted because
+// HuggingFace's spec is silent on the spelling and producers in the wild use
+// both. Match is case-insensitive (the checker lowercases before lookup).
+var ModelCardLicenseKeys = map[string]bool{
+	"license":  true,
+	"licence":  true, // UK spelling — observed in some HF cards
+	"licenses": true, // plural form occasionally used for multi-license declarations
+	"licences": true,
+}
+
+// ModelCardSourceKeys is the set of YAML frontmatter keys that declare model
+// provenance — base model lineage, training data references, or a parent
+// model registry link. Presence of ANY of these keys (with a non-empty value)
+// is sufficient to pass the no-source check.
+var ModelCardSourceKeys = map[string]bool{
+	"base_model":     true,
+	"base_models":    true, // plural form for multi-base lineage
+	"source":         true,
+	"sources":        true,
+	"training_data":  true,
+	"datasets":       true, // HuggingFace canonical key
+	"dataset":        true,
+	"parent_model":   true,
+	"parent_models":  true,
+	"finetuned_from": true,
+	"derived_from":   true,
+}
+
+// ModelCardEvalKeys is the set of YAML frontmatter keys that declare an
+// evaluation or benchmark section for the model. Presence in frontmatter is
+// sufficient to pass the no-eval check; presence of a body section heading
+// is also sufficient (see ModelCardEvalSectionHeaders).
+var ModelCardEvalKeys = map[string]bool{
+	"eval":        true,
+	"evaluation":  true,
+	"evaluations": true,
+	"benchmark":   true,
+	"benchmarks":  true,
+	"metrics":     true,
+	"model-index": true, // HuggingFace canonical eval block
+	"model_index": true,
+	"results":     true,
+	"performance": true,
+}
+
+// ModelCardLicenseSectionHeaders matches markdown body headings whose presence
+// indicates a license declaration in the body. Levels 1-6 are accepted; the
+// match is case-insensitive and ignores leading/trailing whitespace.
+//
+// Each pattern matches the START of a line — frontmatter has already been
+// stripped before the body is scanned, so leading-line semantics are stable.
+var ModelCardLicenseSectionHeaders = regexp.MustCompile(`(?im)^\s*#{1,6}\s*licen[cs]e\b`)
+
+// ModelCardEvalSectionHeaders matches markdown body headings whose presence
+// indicates an evaluation/benchmark declaration in the body.
+var ModelCardEvalSectionHeaders = regexp.MustCompile(`(?im)^\s*#{1,6}\s*(evaluation|eval|benchmark|benchmarks|metrics|results|performance)\b`)
+
+// ModelCardClaimRegex matches mentions of accuracy/F1/AUC/precision NUMBERS in
+// model-card body text. The presence of a number-bearing claim WITHOUT a
+// citation or eval section is suspicious — it may indicate an unsupported
+// performance claim used to lure users into trusting the model.
+//
+// Examples that match:
+//
+//	"94.2% accuracy"
+//	"accuracy: 0.95"
+//	"F1 = 0.92"
+//	"AUC of 0.99"
+//	"precision: 0.87"
+//	"recall=0.81"
+//
+// The regex is intentionally broad — false-positives downgrade to INFO
+// severity, never HIGH or CRITICAL.
+var ModelCardClaimRegex = regexp.MustCompile(`(?i)\b(accuracy|f1|f-1|auc|auroc|aupr|precision|recall|bleu|rouge|perplexity|mAP|top-?[15])\b[^\n]{0,40}?(?:[:=]\s*|of\s+|\s+is\s+|\s+)?(?:\d+\.?\d*\s*%|0?\.\d+|\d+\.\d+)`)
+
+// ModelCardCitationRegex matches inline citations or external references in
+// the body that satisfy the "claim has a citation" requirement. Any of:
+//
+//	[ref](url) markdown links
+//	(arXiv:xxxx.xxxxx) academic refs
+//	"see https://..."
+//	"@citation"
+//
+// If a body contains BOTH a claim AND a matching citation pattern (or the
+// body has an explicit ## Evaluation / ## Benchmarks heading), the no-eval
+// check passes.
+var ModelCardCitationRegex = regexp.MustCompile(`(?i)(\[[^\]]+\]\([^)]+\)|arxiv[:\.\s][\d\.]+|doi[:\s]|https?://[^\s)]+|see\s+(table|figure)\s+\d+|@[a-z][a-z0-9_-]+\b)`)

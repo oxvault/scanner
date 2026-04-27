@@ -214,6 +214,10 @@ func TestComposer_Scan_Directory_AggregatesFindings(t *testing.T) {
 	dir := t.TempDir()
 	writeAibomFile(t, dir, "a.pkl", []byte{0x80, 0x04})
 	writeAibomFile(t, dir, "b.onnx", []byte{0x08, 0x01})
+	// Drop a model card alongside the artifacts to suppress the composer's
+	// missing-card aggregation; this test asserts per-provider dispatch
+	// aggregation, not the missing-card rule (which has its own tests).
+	writeAibomFile(t, dir, "README.md", []byte("# card\n"))
 
 	mocks := newComposerMocks()
 	mocks.pickle.AnalyzeFileResult = []providers.Finding{{Rule: "pickle-1"}}
@@ -222,7 +226,7 @@ func TestComposer_Scan_Directory_AggregatesFindings(t *testing.T) {
 
 	findings := c.Scan(dir)
 	if len(findings) != 3 {
-		t.Fatalf("expected 3 aggregated findings, got %d", len(findings))
+		t.Fatalf("expected 3 aggregated findings, got %d (%+v)", len(findings), findings)
 	}
 
 	rules := map[string]bool{}
@@ -267,4 +271,121 @@ func TestNewComposer_DefaultsAreInstalledForMissingOptions(t *testing.T) {
 	dir := t.TempDir()
 	path := writeAibomFile(t, dir, "weights.pkl", []byte{0x80, 0x04})
 	_ = c.Scan(path) // must not panic
+}
+
+// ── cross-file aggregation: missing model card ──────────────────────────────
+//
+// These tests exercise the production composer (no mocks for the model-card
+// provider) end-to-end so the missing-card rule actually fires on real
+// `oxvault scan` invocations. Mock-based per-file dispatch tests are not
+// sufficient because mocks cannot tell the composer "I saw an artifact" —
+// the aggregation lives in the composer itself.
+
+func TestComposer_Scan_Directory_MissingCard_FiresOnArtifactWithoutCard(t *testing.T) {
+	// Real-world repro: a directory containing a pickle artifact but no
+	// README.md / MODEL_CARD.md. Before the fix this rule was dead in
+	// production because the composer dispatched per-file via dispatch()
+	// and never invoked CheckDirectory; only the unit tests fired the rule.
+	dir := t.TempDir()
+	writeAibomFile(t, dir, "weights.pkl", []byte{0x80, 0x04})
+
+	// Use the real composer (no model-card mock) to exercise aggregation.
+	c := providers.NewComposer()
+	findings := c.Scan(dir)
+
+	if !findRule(findings, "aibom-modelcard-missing") {
+		t.Errorf("expected aibom-modelcard-missing from real composer scan; got: %+v", findings)
+	}
+}
+
+func TestComposer_Scan_Directory_MissingCard_SuppressedWhenCardPresent(t *testing.T) {
+	// A README.md alongside the pickle suppresses the missing-card warning.
+	dir := t.TempDir()
+	writeAibomFile(t, dir, "weights.pkl", []byte{0x80, 0x04})
+	cardBody := []byte(`---
+license: mit
+base_model: bert-base-uncased
+---
+# My Model
+`)
+	writeAibomFile(t, dir, "README.md", cardBody)
+
+	c := providers.NewComposer()
+	findings := c.Scan(dir)
+
+	for _, f := range findings {
+		if f.Rule == "aibom-modelcard-missing" {
+			t.Errorf("artifact + card present should suppress missing rule; got: %+v", f)
+		}
+	}
+}
+
+func TestComposer_Scan_Directory_MissingCard_PerArtifactDirectory(t *testing.T) {
+	// Two sibling subdirectories — one with a card, one without. Only the
+	// uncovered directory must emit missing-card.
+	dir := t.TempDir()
+
+	covered := filepath.Join(dir, "model-a")
+	if err := os.MkdirAll(covered, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeAibomFile(t, covered, "weights.pkl", []byte{0x80, 0x04})
+	writeAibomFile(t, covered, "README.md", []byte(`---
+license: mit
+base_model: bert
+---
+# A
+`))
+
+	uncovered := filepath.Join(dir, "model-b")
+	if err := os.MkdirAll(uncovered, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeAibomFile(t, uncovered, "weights.pkl", []byte{0x80, 0x04})
+
+	c := providers.NewComposer()
+	findings := c.Scan(dir)
+
+	missingCount := 0
+	for _, f := range findings {
+		if f.Rule == "aibom-modelcard-missing" {
+			missingCount++
+			if f.File != uncovered {
+				t.Errorf("missing-card File = %q, want %q", f.File, uncovered)
+			}
+		}
+	}
+	if missingCount != 1 {
+		t.Errorf("expected exactly 1 missing-card finding, got %d", missingCount)
+	}
+}
+
+func TestComposer_Scan_Directory_MissingCard_OnnxArtifactAlsoTriggers(t *testing.T) {
+	// The aggregation must include onnx and safetensors, not just pickle.
+	dir := t.TempDir()
+	writeAibomFile(t, dir, "graph.onnx", []byte{0x08, 0x01})
+
+	c := providers.NewComposer()
+	findings := c.Scan(dir)
+
+	if !findRule(findings, "aibom-modelcard-missing") {
+		t.Errorf("onnx artifact without card should fire missing-card; got: %+v", findings)
+	}
+}
+
+func TestComposer_Scan_Directory_MissingCard_FileTargetDoesNotFire(t *testing.T) {
+	// When the user scans a single file (not a directory), the composer
+	// MUST NOT emit missing-card — the user is targeting an artifact in
+	// isolation, not declaring "this directory should have a card".
+	dir := t.TempDir()
+	path := writeAibomFile(t, dir, "weights.pkl", []byte{0x80, 0x04})
+
+	c := providers.NewComposer()
+	findings := c.Scan(path)
+
+	for _, f := range findings {
+		if f.Rule == "aibom-modelcard-missing" {
+			t.Errorf("single-file scan should not fire missing-card; got: %+v", f)
+		}
+	}
 }
