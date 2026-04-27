@@ -1,6 +1,4 @@
-package aibom
-
-import "github.com/oxvault/scanner/providers"
+package providers
 
 // onnxValidator is the Day-1 skeleton implementation. The real protobuf
 // validator lands in Day 3 of the v0.4 AIBOM milestone.
@@ -12,11 +10,11 @@ func NewONNXValidator() ONNXValidator {
 }
 
 // ValidateFile is a no-op skeleton. Real logic arrives in Day 3.
-func (o *onnxValidator) ValidateFile(_ string) []providers.Finding {
+func (o *onnxValidator) ValidateFile(_ string) []Finding {
 	return nil
 }
 
 // ValidateDirectory is a no-op skeleton. Real logic arrives in Day 3.
-func (o *onnxValidator) ValidateDirectory(_ string) []providers.Finding {
+func (o *onnxValidator) ValidateDirectory(_ string) []Finding {
 	return nil
 }

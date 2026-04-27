@@ -1,4 +1,4 @@
-package aibom_test
+package providers_test
 
 import (
 	"os"
@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/oxvault/scanner/providers"
-	"github.com/oxvault/scanner/providers/aibom"
 )
 
 func TestDetectArtifactFormat_ByExtension(t *testing.T) {
@@ -44,7 +43,7 @@ func TestDetectArtifactFormat_ByExtension(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			got := aibom.DetectArtifactFormat(path)
+			got := providers.DetectArtifactFormat(path)
 			if got != tt.want {
 				t.Errorf("DetectArtifactFormat(%q) = %q, want %q", tt.filename, got, tt.want)
 			}
@@ -58,7 +57,7 @@ func TestDetectArtifactFormat_CaseInsensitive(t *testing.T) {
 	if err := os.WriteFile(path, []byte{0x80}, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := aibom.DetectArtifactFormat(path); got != providers.FormatPickle {
+	if got := providers.DetectArtifactFormat(path); got != providers.FormatPickle {
 		t.Errorf("expected FormatPickle for upper-case extension, got %q", got)
 	}
 }
@@ -70,7 +69,7 @@ func TestDetectArtifactFormat_MagicByteFallback_Pickle(t *testing.T) {
 	if err := os.WriteFile(path, []byte{0x80, 0x04, 0x95}, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := aibom.DetectArtifactFormat(path); got != providers.FormatPickle {
+	if got := providers.DetectArtifactFormat(path); got != providers.FormatPickle {
 		t.Errorf("expected FormatPickle from magic-byte fallback, got %q", got)
 	}
 }
@@ -81,7 +80,7 @@ func TestDetectArtifactFormat_MagicByteFallback_Safetensors(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"__metadata__":{}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := aibom.DetectArtifactFormat(path); got != providers.FormatSafetensors {
+	if got := providers.DetectArtifactFormat(path); got != providers.FormatSafetensors {
 		t.Errorf("expected FormatSafetensors from leading-brace fallback, got %q", got)
 	}
 }
@@ -92,13 +91,13 @@ func TestDetectArtifactFormat_MagicByteFallback_ONNX(t *testing.T) {
 	if err := os.WriteFile(path, []byte{0x08, 0x07}, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := aibom.DetectArtifactFormat(path); got != providers.FormatONNX {
+	if got := providers.DetectArtifactFormat(path); got != providers.FormatONNX {
 		t.Errorf("expected FormatONNX from protobuf magic, got %q", got)
 	}
 }
 
 func TestDetectArtifactFormat_NonexistentFileReturnsUnknown(t *testing.T) {
-	got := aibom.DetectArtifactFormat("/no/such/file/here.weird")
+	got := providers.DetectArtifactFormat("/no/such/file/here.weird")
 	if got != providers.FormatUnknown {
 		t.Errorf("expected FormatUnknown for missing file, got %q", got)
 	}
@@ -110,7 +109,7 @@ func TestDetectArtifactFormat_EmptyFileWithUnknownExt(t *testing.T) {
 	if err := os.WriteFile(path, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := aibom.DetectArtifactFormat(path); got != providers.FormatUnknown {
+	if got := providers.DetectArtifactFormat(path); got != providers.FormatUnknown {
 		t.Errorf("expected FormatUnknown for empty file, got %q", got)
 	}
 }
@@ -139,7 +138,7 @@ func TestDetectArtifactFormat_TorchExtMissingMagic(t *testing.T) {
 			if err := os.WriteFile(path, []byte("Hello world\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			if got := aibom.DetectArtifactFormat(path); got != providers.FormatUnknown {
+			if got := providers.DetectArtifactFormat(path); got != providers.FormatUnknown {
 				t.Errorf("expected FormatUnknown for non-pickle %s, got %q", tt.filename, got)
 			}
 		})
@@ -156,7 +155,7 @@ func TestDetectArtifactFormat_TorchExtZipMagic(t *testing.T) {
 	if err := os.WriteFile(path, []byte{'P', 'K', 0x03, 0x04, 0x00}, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := aibom.DetectArtifactFormat(path); got != providers.FormatPickle {
+	if got := providers.DetectArtifactFormat(path); got != providers.FormatPickle {
 		t.Errorf("expected FormatPickle for ZIP-wrapped .pt, got %q", got)
 	}
 }

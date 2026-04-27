@@ -1,4 +1,4 @@
-package aibom_test
+package providers_test
 
 import (
 	"archive/zip"
@@ -10,13 +10,12 @@ import (
 	"testing"
 
 	"github.com/oxvault/scanner/providers"
-	"github.com/oxvault/scanner/providers/aibom"
 )
 
 // fixtureRoot returns the absolute path to testdata/aibom/pickle/<rel>.
 func pickleFixture(t *testing.T, rel string) string {
 	t.Helper()
-	path := filepath.Join("..", "..", "testdata", "aibom", "pickle", rel)
+	path := filepath.Join("..", "testdata", "aibom", "pickle", rel)
 	if _, err := os.Stat(path); err != nil {
 		t.Skipf("fixture %s missing — run scripts/gen_aibom_fixtures.py: %v", rel, err)
 	}
@@ -110,7 +109,7 @@ func TestPickleAnalyzer_Fixtures(t *testing.T) {
 		},
 	}
 
-	a := aibom.NewPickleAnalyzer()
+	a := providers.NewPickleAnalyzer()
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -129,7 +128,7 @@ func TestPickleAnalyzer_Fixtures(t *testing.T) {
 // stream. (Reading 3 GiB into memory in CI would cripple the runner.)
 func TestPickleAnalyzer_OversizedFileSkipsDisassembly(t *testing.T) {
 	path := pickleFixture(t, "malicious/oversized_file.pkl")
-	a := aibom.NewPickleAnalyzer()
+	a := providers.NewPickleAnalyzer()
 
 	findings := a.AnalyzeFile(path)
 	if len(findings) != 1 {
@@ -148,7 +147,7 @@ func TestPickleAnalyzer_OversizedFileSkipsDisassembly(t *testing.T) {
 // recursion-depth guard fires for the 6-layer ZIP bomb fixture.
 func TestPickleAnalyzer_ZipBombNestedExceedsRecursionDepth(t *testing.T) {
 	path := pickleFixture(t, "malicious/zip_bomb_nested.pt")
-	a := aibom.NewPickleAnalyzer()
+	a := providers.NewPickleAnalyzer()
 
 	findings := a.AnalyzeFile(path)
 	if !findRule(findings, "aibom-pickle-truncated") {
@@ -167,7 +166,7 @@ func TestPickleAnalyzer_ZipBombNestedExceedsRecursionDepth(t *testing.T) {
 // entry count cap caps analysis even if every entry is independently small.
 func TestPickleAnalyzer_ManyInnerPicklesEnforcesEntryCap(t *testing.T) {
 	path := pickleFixture(t, "malicious/many_inner_pkls.pt")
-	a := aibom.NewPickleAnalyzer()
+	a := providers.NewPickleAnalyzer()
 
 	findings := a.AnalyzeFile(path)
 	// Truncation finding MUST be present.
@@ -195,30 +194,34 @@ func TestPickleAnalyzer_ManyInnerPicklesEnforcesEntryCap(t *testing.T) {
 // These tests build pickle byte streams in-process so we can exercise byte-
 // level edge cases (STACK_GLOBAL guards, MEMOIZE id collisions, prefix
 // allowlist) without requiring fixture files.
+//
+// Opcode constants are duplicated here (not re-exported from the production
+// package) because the production constants are unexported. Keeping them
+// in this test file keeps the test self-contained.
 
 const (
-	opPROTO            = byte(0x80)
-	opFRAME            = byte(0x95)
-	opSTOP             = byte('.')
-	opSHORT_BINUNICODE = byte(0x8c)
-	opSTACK_GLOBAL     = byte(0x93)
-	opMEMOIZE          = byte(0x94)
-	opEMPTY_TUPLE      = byte(')')
-	opTUPLE1           = byte(0x85)
-	opREDUCE           = byte('R')
-	opNONE             = byte('N')
-	opBINPUT           = byte('q')
-	opBINGET           = byte('h')
+	tstPROTO            = byte(0x80)
+	tstFRAME            = byte(0x95)
+	tstSTOP             = byte('.')
+	tstSHORT_BINUNICODE = byte(0x8c)
+	tstSTACK_GLOBAL     = byte(0x93)
+	tstMEMOIZE          = byte(0x94)
+	tstEMPTY_TUPLE      = byte(')')
+	tstTUPLE1           = byte(0x85)
+	tstREDUCE           = byte('R')
+	tstNONE             = byte('N')
+	tstBINPUT           = byte('q')
+	tstBINGET           = byte('h')
 )
 
 // buildPickle wraps body with the standard PROTO 4 + FRAME header + STOP.
 func buildPickle(body []byte) []byte {
 	inner := make([]byte, 0, len(body)+1)
 	inner = append(inner, body...)
-	inner = append(inner, opSTOP)
+	inner = append(inner, tstSTOP)
 	out := make([]byte, 0, len(inner)+10)
-	out = append(out, opPROTO, 0x04)
-	out = append(out, opFRAME)
+	out = append(out, tstPROTO, 0x04)
+	out = append(out, tstFRAME)
 	frameLen := make([]byte, 8)
 	binary.LittleEndian.PutUint64(frameLen, uint64(len(inner)))
 	out = append(out, frameLen...)
@@ -231,7 +234,7 @@ func shortBinunicode(s string) []byte {
 	if len(s) >= 256 {
 		panic("test helper: string too long for SHORT_BINUNICODE")
 	}
-	out := []byte{opSHORT_BINUNICODE, byte(len(s))}
+	out := []byte{tstSHORT_BINUNICODE, byte(len(s))}
 	out = append(out, []byte(s)...)
 	return out
 }
@@ -240,7 +243,7 @@ func shortBinunicode(s string) []byte {
 func stackGlobal(module, name string) []byte {
 	out := shortBinunicode(module)
 	out = append(out, shortBinunicode(name)...)
-	out = append(out, opSTACK_GLOBAL)
+	out = append(out, tstSTACK_GLOBAL)
 	return out
 }
 
@@ -258,13 +261,13 @@ func TestPickleAnalyzer_StackGlobalValid(t *testing.T) {
 	// STACK_GLOBAL with two valid kindString entries — should classify the
 	// resulting GLOBAL ref. We use builtins.eval to force a CRITICAL finding.
 	body := stackGlobal("builtins", "eval") // STACK_GLOBAL on stack
-	body = append(body, opMEMOIZE)
-	body = append(body, opEMPTY_TUPLE)
-	body = append(body, opREDUCE)
-	body = append(body, opMEMOIZE)
+	body = append(body, tstMEMOIZE)
+	body = append(body, tstEMPTY_TUPLE)
+	body = append(body, tstREDUCE)
+	body = append(body, tstMEMOIZE)
 
 	path := writeTempPickle(t, buildPickle(body))
-	findings := aibom.NewPickleAnalyzer().AnalyzeFile(path)
+	findings := providers.NewPickleAnalyzer().AnalyzeFile(path)
 	if !findRuleAndSeverity(findings, "aibom-pickle-eval-exec", providers.SeverityCritical) {
 		t.Errorf("expected eval-exec CRITICAL, got: %+v", findings)
 	}
@@ -274,10 +277,10 @@ func TestPickleAnalyzer_StackGlobalMalformedStack(t *testing.T) {
 	// Pop two non-string entries: NONE NONE STACK_GLOBAL. The fixed
 	// disassembler must refuse to synthesise a "." reference and emit
 	// truncated WARNING instead.
-	body := []byte{opNONE, opNONE, opSTACK_GLOBAL}
+	body := []byte{tstNONE, tstNONE, tstSTACK_GLOBAL}
 
 	path := writeTempPickle(t, buildPickle(body))
-	findings := aibom.NewPickleAnalyzer().AnalyzeFile(path)
+	findings := providers.NewPickleAnalyzer().AnalyzeFile(path)
 	if !findRuleAndSeverity(findings, "aibom-pickle-truncated", providers.SeverityWarning) {
 		t.Errorf("expected truncated WARNING for malformed STACK_GLOBAL, got: %+v", findings)
 	}
@@ -288,13 +291,13 @@ func TestPickleAnalyzer_AllowlistSuppressesPerRefFindings(t *testing.T) {
 	// reference to it (with REDUCE) MUST NOT fire reduce-suspicious — only
 	// the file-level allowlisted INFO summary should appear.
 	body := stackGlobal("torch._utils", "_rebuild_tensor_v2")
-	body = append(body, opMEMOIZE)
-	body = append(body, opEMPTY_TUPLE)
-	body = append(body, opREDUCE)
-	body = append(body, opMEMOIZE)
+	body = append(body, tstMEMOIZE)
+	body = append(body, tstEMPTY_TUPLE)
+	body = append(body, tstREDUCE)
+	body = append(body, tstMEMOIZE)
 
 	path := writeTempPickle(t, buildPickle(body))
-	findings := aibom.NewPickleAnalyzer().AnalyzeFile(path)
+	findings := providers.NewPickleAnalyzer().AnalyzeFile(path)
 
 	if findRule(findings, "aibom-pickle-reduce-suspicious") {
 		t.Errorf("allowlisted ref should not fire reduce-suspicious, got: %+v", findings)
@@ -308,10 +311,10 @@ func TestPickleAnalyzer_PrefixAllowlistSuppressesFindings(t *testing.T) {
 	// torch.nn.modules.linear.Linear matches the AllowedMLGlobalPrefixes
 	// entry "torch.nn.modules.". A bare GLOBAL ref must be suppressed.
 	body := stackGlobal("torch.nn.modules.linear", "Linear")
-	body = append(body, opMEMOIZE)
+	body = append(body, tstMEMOIZE)
 
 	path := writeTempPickle(t, buildPickle(body))
-	findings := aibom.NewPickleAnalyzer().AnalyzeFile(path)
+	findings := providers.NewPickleAnalyzer().AnalyzeFile(path)
 
 	for _, f := range findings {
 		if f.Rule == "aibom-pickle-reduce-suspicious" {
@@ -353,18 +356,18 @@ func TestPickleAnalyzer_MemoizeIDDoesNotCollideWithBinput(t *testing.T) {
 	// fires no finding. The test asserts the CORRECT behaviour: os.system
 	// CRITICAL must fire.
 	body := append([]byte{}, shortBinunicode("safe_value")...)
-	body = append(body, opBINPUT, 0x00)
+	body = append(body, tstBINPUT, 0x00)
 	body = append(body, shortBinunicode("os")...)
-	body = append(body, opMEMOIZE)
+	body = append(body, tstMEMOIZE)
 	body = append(body, shortBinunicode("system")...)
-	body = append(body, opMEMOIZE)
-	body = append(body, opBINGET, 0x00)
-	body = append(body, opBINGET, 0x01)
-	body = append(body, opSTACK_GLOBAL, opMEMOIZE)
-	body = append(body, opEMPTY_TUPLE, opREDUCE, opMEMOIZE)
+	body = append(body, tstMEMOIZE)
+	body = append(body, tstBINGET, 0x00)
+	body = append(body, tstBINGET, 0x01)
+	body = append(body, tstSTACK_GLOBAL, tstMEMOIZE)
+	body = append(body, tstEMPTY_TUPLE, tstREDUCE, tstMEMOIZE)
 
 	path := writeTempPickle(t, buildPickle(body))
-	findings := aibom.NewPickleAnalyzer().AnalyzeFile(path)
+	findings := providers.NewPickleAnalyzer().AnalyzeFile(path)
 
 	if !findRuleAndSeverity(findings, "aibom-pickle-os-system", providers.SeverityCritical) {
 		t.Errorf("expected os-system CRITICAL after MEMOIZE id allocation, got: %+v", findings)
@@ -386,10 +389,10 @@ func TestPickleAnalyzer_MemoizeIDDoesNotCollideWithBinput(t *testing.T) {
 func TestPickleAnalyzer_RecursionDepthEnforcedFromZipPath(t *testing.T) {
 	// Build a malicious leaf pickle (os.system).
 	leafBody := stackGlobal("os", "system")
-	leafBody = append(leafBody, opMEMOIZE)
+	leafBody = append(leafBody, tstMEMOIZE)
 	leafBody = append(leafBody, shortBinunicode("id")...)
-	leafBody = append(leafBody, opTUPLE1)
-	leafBody = append(leafBody, opREDUCE, opMEMOIZE)
+	leafBody = append(leafBody, tstTUPLE1)
+	leafBody = append(leafBody, tstREDUCE, tstMEMOIZE)
 	leaf := buildPickle(leafBody)
 
 	// Wrap in 6 layers of ZIP — each layer puts the previous bytes in
@@ -412,7 +415,7 @@ func TestPickleAnalyzer_RecursionDepthEnforcedFromZipPath(t *testing.T) {
 	}
 
 	path := writeTempPickle(t, payload)
-	findings := aibom.NewPickleAnalyzer().AnalyzeFile(path)
+	findings := providers.NewPickleAnalyzer().AnalyzeFile(path)
 
 	if !findRule(findings, "aibom-pickle-truncated") {
 		t.Errorf("expected aibom-pickle-truncated when ZIP chain exceeds depth, got: %+v", findings)
@@ -432,7 +435,7 @@ func TestPickleAnalyzer_HandlesMalformedZipGracefully(t *testing.T) {
 	body := []byte{'P', 'K', 0x03, 0x04, 0x00, 0x00, 0x00, 0x00}
 	path := writeTempPickle(t, body)
 
-	findings := aibom.NewPickleAnalyzer().AnalyzeFile(path)
+	findings := providers.NewPickleAnalyzer().AnalyzeFile(path)
 	// Truncation finding MUST be present (either from ZIP-parse failure or
 	// the recover path).
 	if !findRule(findings, "aibom-pickle-truncated") {
@@ -443,7 +446,7 @@ func TestPickleAnalyzer_HandlesMalformedZipGracefully(t *testing.T) {
 // TestPickleAnalyzer_EmptyFile ensures empty pickle files don't crash.
 func TestPickleAnalyzer_EmptyFile(t *testing.T) {
 	path := writeTempPickle(t, nil)
-	findings := aibom.NewPickleAnalyzer().AnalyzeFile(path)
+	findings := providers.NewPickleAnalyzer().AnalyzeFile(path)
 	// An empty stream is "truncated — stream ended before STOP".
 	if !findRule(findings, "aibom-pickle-truncated") {
 		t.Errorf("expected aibom-pickle-truncated for empty file, got: %+v", findings)
@@ -456,7 +459,7 @@ func TestPickleAnalyzer_AnalyzeDirectory_WalksAllPickles(t *testing.T) {
 	dir := t.TempDir()
 	// Two pickles, one decoy.
 	body := stackGlobal("os", "system")
-	body = append(body, opMEMOIZE, opEMPTY_TUPLE, opREDUCE, opMEMOIZE)
+	body = append(body, tstMEMOIZE, tstEMPTY_TUPLE, tstREDUCE, tstMEMOIZE)
 	full := buildPickle(body)
 
 	if err := os.WriteFile(filepath.Join(dir, "a.pkl"), full, 0o644); err != nil {
@@ -469,7 +472,7 @@ func TestPickleAnalyzer_AnalyzeDirectory_WalksAllPickles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	findings := aibom.NewPickleAnalyzer().AnalyzeDirectory(dir)
+	findings := providers.NewPickleAnalyzer().AnalyzeDirectory(dir)
 
 	osSysCount := 0
 	for _, f := range findings {
@@ -484,7 +487,7 @@ func TestPickleAnalyzer_AnalyzeDirectory_WalksAllPickles(t *testing.T) {
 
 // TestPickleAnalyzer_NonexistentFile asserts a nil return for missing files.
 func TestPickleAnalyzer_NonexistentFile(t *testing.T) {
-	findings := aibom.NewPickleAnalyzer().AnalyzeFile("/no/such/file/anywhere.pkl")
+	findings := providers.NewPickleAnalyzer().AnalyzeFile("/no/such/file/anywhere.pkl")
 	if findings != nil {
 		t.Errorf("expected nil for missing file, got %+v", findings)
 	}

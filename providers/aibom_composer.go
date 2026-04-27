@@ -1,9 +1,7 @@
-package aibom
+package providers
 
 import (
 	"os"
-
-	"github.com/oxvault/scanner/providers"
 )
 
 // composer is the concrete AIBOMComposer. It walks the target path and
@@ -81,7 +79,7 @@ func NewComposer(opts ...ComposerOption) AIBOMComposer {
 // dispatches each file individually — sub-providers' AnalyzeDirectory /
 // ValidateDirectory / CheckDirectory methods are NOT called from here so
 // that the walk and exclusion rules are owned by the composer.
-func (c *composer) Scan(path string) []providers.Finding {
+func (c *composer) Scan(path string) []Finding {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil
@@ -91,10 +89,10 @@ func (c *composer) Scan(path string) []providers.Finding {
 		return c.dispatch(path)
 	}
 
-	var findings []providers.Finding
+	var findings []Finding
 	// Reuse the shared walker so directory/file exclusion stays consistent
 	// across providers (SAST, dep-audit, AIBOM). Symlinks are not followed.
-	_ = providers.WalkScanFiles(path, func(p string) {
+	_ = WalkScanFiles(path, func(p string) {
 		findings = append(findings, c.dispatch(p)...)
 	})
 	return findings
@@ -102,19 +100,19 @@ func (c *composer) Scan(path string) []providers.Finding {
 
 // dispatch routes a single file to the sub-provider matching its
 // ArtifactFormat. Files of FormatUnknown are skipped silently.
-func (c *composer) dispatch(path string) []providers.Finding {
+func (c *composer) dispatch(path string) []Finding {
 	switch DetectArtifactFormat(path) {
-	case providers.FormatPickle:
+	case FormatPickle:
 		return c.pickle.AnalyzeFile(path)
-	case providers.FormatONNX:
+	case FormatONNX:
 		return c.onnx.ValidateFile(path)
-	case providers.FormatSafetensors:
+	case FormatSafetensors:
 		return c.safetensors.ValidateFile(path)
-	case providers.FormatModelCard:
+	case FormatModelCard:
 		return c.modelCard.CheckFile(path)
-	case providers.FormatSignature:
+	case FormatSignature:
 		return c.signature.VerifyArtifact(path)
-	case providers.FormatUnknown:
+	case FormatUnknown:
 		fallthrough
 	default:
 		return nil

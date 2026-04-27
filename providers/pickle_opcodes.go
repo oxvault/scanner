@@ -1,4 +1,4 @@
-package aibom
+package providers
 
 // Pickle opcode constants for protocols 0 through 5.
 //

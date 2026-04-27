@@ -217,7 +217,7 @@ func (m *MockPinStore) Load() (map[string]string, error) {
 	return m.LoadResult, m.LoadErr
 }
 
-// MockPickleAnalyzer is a configurable mock for aibom.PickleAnalyzer.
+// MockPickleAnalyzer is a configurable mock for providers.PickleAnalyzer.
 type MockPickleAnalyzer struct {
 	AnalyzeFileResult      []providers.Finding
 	AnalyzeDirectoryResult []providers.Finding
@@ -241,7 +241,7 @@ func (m *MockPickleAnalyzer) AnalyzeDirectory(dir string) []providers.Finding {
 	return m.AnalyzeDirectoryResult
 }
 
-// MockONNXValidator is a configurable mock for aibom.ONNXValidator.
+// MockONNXValidator is a configurable mock for providers.ONNXValidator.
 type MockONNXValidator struct {
 	ValidateFileResult      []providers.Finding
 	ValidateDirectoryResult []providers.Finding
@@ -264,7 +264,7 @@ func (m *MockONNXValidator) ValidateDirectory(dir string) []providers.Finding {
 	return m.ValidateDirectoryResult
 }
 
-// MockSafetensorsValidator is a configurable mock for aibom.SafetensorsValidator.
+// MockSafetensorsValidator is a configurable mock for providers.SafetensorsValidator.
 type MockSafetensorsValidator struct {
 	ValidateFileResult      []providers.Finding
 	ValidateDirectoryResult []providers.Finding
@@ -287,7 +287,7 @@ func (m *MockSafetensorsValidator) ValidateDirectory(dir string) []providers.Fin
 	return m.ValidateDirectoryResult
 }
 
-// MockModelCardChecker is a configurable mock for aibom.ModelCardChecker.
+// MockModelCardChecker is a configurable mock for providers.ModelCardChecker.
 type MockModelCardChecker struct {
 	CheckFileResult      []providers.Finding
 	CheckDirectoryResult []providers.Finding
@@ -310,7 +310,7 @@ func (m *MockModelCardChecker) CheckDirectory(dir string) []providers.Finding {
 	return m.CheckDirectoryResult
 }
 
-// MockSignatureVerifier is a configurable mock for aibom.SignatureVerifier.
+// MockSignatureVerifier is a configurable mock for providers.SignatureVerifier.
 type MockSignatureVerifier struct {
 	VerifyArtifactResult  []providers.Finding
 	VerifyDirectoryResult []providers.Finding
@@ -333,7 +333,7 @@ func (m *MockSignatureVerifier) VerifyDirectory(dir string) []providers.Finding 
 	return m.VerifyDirectoryResult
 }
 
-// MockAIBOMComposer is a configurable mock for aibom.AIBOMComposer.
+// MockAIBOMComposer is a configurable mock for providers.AIBOMComposer.
 type MockAIBOMComposer struct {
 	ScanResult []providers.Finding
 	ScanCount  atomic.Int32

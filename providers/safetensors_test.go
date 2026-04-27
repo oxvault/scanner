@@ -1,4 +1,4 @@
-package aibom_test
+package providers_test
 
 import (
 	"encoding/binary"
@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/oxvault/scanner/providers"
-	"github.com/oxvault/scanner/providers/aibom"
 )
 
 // safetensorsFixture writes a minimal safetensors-format file at path with
@@ -124,11 +123,11 @@ func TestSafetensorsValidator_Fixtures(t *testing.T) {
 		},
 	}
 
-	v := aibom.NewSafetensorsValidator()
+	v := providers.NewSafetensorsValidator()
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			path := filepath.Join("..", "..", "testdata", "aibom", "safetensors", tt.fixture)
+			path := filepath.Join("..", "testdata", "aibom", "safetensors", tt.fixture)
 			if _, err := os.Stat(path); err != nil {
 				t.Fatalf("missing fixture %s: %v (run scripts/gen_aibom_fixtures.py)", tt.fixture, err)
 			}
@@ -145,8 +144,8 @@ func TestSafetensorsValidator_Fixtures(t *testing.T) {
 // TestSafetensorsValidator_CleanIsExclusive ensures the clean fixture emits
 // exactly one INFO finding and never a violation.
 func TestSafetensorsValidator_CleanIsExclusive(t *testing.T) {
-	path := filepath.Join("..", "..", "testdata", "aibom", "safetensors", "safe", "clean.safetensors")
-	v := aibom.NewSafetensorsValidator()
+	path := filepath.Join("..", "testdata", "aibom", "safetensors", "safe", "clean.safetensors")
+	v := providers.NewSafetensorsValidator()
 	findings := v.ValidateFile(path)
 
 	if len(findings) != 1 {
@@ -174,7 +173,7 @@ func TestSafetensorsValidator_TooSmallFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	v := aibom.NewSafetensorsValidator()
+	v := providers.NewSafetensorsValidator()
 	findings := v.ValidateFile(path)
 
 	if !findRuleAndSeverity(findings, "aibom-safetensors-header-overflow", providers.SeverityCritical) {
@@ -197,7 +196,7 @@ func TestSafetensorsValidator_HeaderLenMatchingFileNoBody(t *testing.T) {
 	}
 	safetensorsFixture(t, path, header, nil, -1)
 
-	v := aibom.NewSafetensorsValidator()
+	v := providers.NewSafetensorsValidator()
 	findings := v.ValidateFile(path)
 
 	if !findRule(findings, "aibom-safetensors-clean") {
@@ -217,7 +216,7 @@ func TestSafetensorsValidator_NegativeOffsetEnd(t *testing.T) {
 	}
 	safetensorsFixture(t, path, header, []byte{0x00, 0x00, 0x00, 0x00}, -1)
 
-	v := aibom.NewSafetensorsValidator()
+	v := providers.NewSafetensorsValidator()
 	findings := v.ValidateFile(path)
 
 	if !findRuleAndSeverity(findings, "aibom-safetensors-tensor-overflow", providers.SeverityHigh) {
@@ -237,7 +236,7 @@ func TestSafetensorsValidator_NegativeShapeDimension(t *testing.T) {
 	}
 	safetensorsFixture(t, path, header, []byte{0x00, 0x00, 0x00, 0x00}, -1)
 
-	v := aibom.NewSafetensorsValidator()
+	v := providers.NewSafetensorsValidator()
 	findings := v.ValidateFile(path)
 
 	if !findRuleAndSeverity(findings, "aibom-safetensors-malformed-json", providers.SeverityHigh) {
@@ -259,7 +258,7 @@ func TestSafetensorsValidator_MetadataNotStringMap(t *testing.T) {
 	}
 	safetensorsFixture(t, path, header, []byte{0x00, 0x00, 0x00, 0x00}, -1)
 
-	v := aibom.NewSafetensorsValidator()
+	v := providers.NewSafetensorsValidator()
 	findings := v.ValidateFile(path)
 
 	if !findRuleAndSeverity(findings, "aibom-safetensors-malformed-json", providers.SeverityHigh) {
@@ -282,7 +281,7 @@ func TestSafetensorsValidator_ShellMetadataFlagged(t *testing.T) {
 	}
 	safetensorsFixture(t, path, header, []byte{0x00, 0x00, 0x00, 0x00}, -1)
 
-	v := aibom.NewSafetensorsValidator()
+	v := providers.NewSafetensorsValidator()
 	findings := v.ValidateFile(path)
 
 	if !findRule(findings, "aibom-safetensors-suspicious-metadata") {
@@ -305,7 +304,7 @@ func TestSafetensorsValidator_URLMetadataFlagged(t *testing.T) {
 	}
 	safetensorsFixture(t, path, header, []byte{0x00, 0x00, 0x00, 0x00}, -1)
 
-	v := aibom.NewSafetensorsValidator()
+	v := providers.NewSafetensorsValidator()
 	findings := v.ValidateFile(path)
 
 	if !findRule(findings, "aibom-safetensors-suspicious-metadata") {
@@ -334,7 +333,7 @@ func TestSafetensorsValidator_PickleMagicInMetadataFlagged(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	v := aibom.NewSafetensorsValidator()
+	v := providers.NewSafetensorsValidator()
 	findings := v.ValidateFile(path)
 
 	if !findRule(findings, "aibom-safetensors-suspicious-metadata") {
@@ -367,7 +366,7 @@ func TestSafetensorsValidator_ValidateDirectory_WalksAllFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	v := aibom.NewSafetensorsValidator()
+	v := providers.NewSafetensorsValidator()
 	findings := v.ValidateDirectory(dir)
 
 	clean_count := 0
@@ -382,7 +381,7 @@ func TestSafetensorsValidator_ValidateDirectory_WalksAllFiles(t *testing.T) {
 }
 
 func TestSafetensorsValidator_NonexistentFile(t *testing.T) {
-	v := aibom.NewSafetensorsValidator()
+	v := providers.NewSafetensorsValidator()
 	findings := v.ValidateFile("/no/such/file/anywhere")
 	if findings != nil {
 		t.Errorf("expected nil for missing file, got %+v", findings)

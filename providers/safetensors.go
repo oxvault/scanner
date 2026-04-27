@@ -1,4 +1,4 @@
-package aibom
+package providers
 
 import (
 	"encoding/binary"
@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/oxvault/scanner/patterns"
-	"github.com/oxvault/scanner/providers"
 )
 
 // Safetensors header validator.
@@ -44,7 +43,7 @@ const (
 // every call to ValidateFile / ValidateDirectory works against a fresh
 // rule-matcher and accumulates findings locally.
 type safetensorsValidator struct {
-	rules providers.RuleMatcher
+	rules RuleMatcher
 }
 
 // NewSafetensorsValidator returns a SafetensorsValidator wired with a
@@ -52,13 +51,13 @@ type safetensorsValidator struct {
 // the RuleMatcher's ScanDescription so prompt-injection detection stays in
 // a single place.
 func NewSafetensorsValidator() SafetensorsValidator {
-	return &safetensorsValidator{rules: providers.NewRuleMatcher()}
+	return &safetensorsValidator{rules: NewRuleMatcher()}
 }
 
 // ValidateFile inspects a single .safetensors file at path. Returns one
 // Finding per rule violation, plus an aibom-safetensors-clean INFO finding
 // when every check passes.
-func (s *safetensorsValidator) ValidateFile(path string) []providers.Finding {
+func (s *safetensorsValidator) ValidateFile(path string) []Finding {
 	return s.validateFile(path)
 }
 
@@ -67,19 +66,19 @@ func (s *safetensorsValidator) ValidateFile(path string) []providers.Finding {
 // In production the AIBOMComposer owns directory walking, so this method is
 // rarely called — but keeping it functional satisfies the interface and
 // makes the validator usable standalone.
-func (s *safetensorsValidator) ValidateDirectory(dir string) []providers.Finding {
-	var findings []providers.Finding
+func (s *safetensorsValidator) ValidateDirectory(dir string) []Finding {
+	var findings []Finding
 	_ = filepath.Walk(dir, func(path string, info os.FileInfo, walkErr error) error {
 		if walkErr != nil {
 			return nil
 		}
 		if info.IsDir() {
-			if providers.IsExcludedDir(filepath.Base(path)) {
+			if IsExcludedDir(filepath.Base(path)) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if DetectArtifactFormat(path) != providers.FormatSafetensors {
+		if DetectArtifactFormat(path) != FormatSafetensors {
 			return nil
 		}
 		findings = append(findings, s.validateFile(path)...)
@@ -104,7 +103,7 @@ type safetensorsTensor struct {
 // validateFile is the actual entry point. It performs ALL checks in a single
 // pass and returns either a list of violation findings, or — when the file
 // is fully valid — a single aibom-safetensors-clean INFO finding.
-func (s *safetensorsValidator) validateFile(path string) []providers.Finding {
+func (s *safetensorsValidator) validateFile(path string) []Finding {
 	f, err := os.Open(path) //nolint:gosec // path comes from filesystem walks scoped to the scan target.
 	if err != nil {
 		return nil
@@ -119,11 +118,11 @@ func (s *safetensorsValidator) validateFile(path string) []providers.Finding {
 
 	// Reject files that cannot possibly contain a length prefix.
 	if fileSize < safetensorsLengthPrefix {
-		return []providers.Finding{{
+		return []Finding{{
 			Rule:            "aibom-safetensors-header-overflow",
-			Severity:        providers.SeverityCritical,
-			Confidence:      providers.ConfidenceHigh,
-			ConfidenceLabel: providers.ConfidenceHigh.String(),
+			Severity:        SeverityCritical,
+			Confidence:      ConfidenceHigh,
+			ConfidenceLabel: ConfidenceHigh.String(),
 			File:            path,
 			Message:         fmt.Sprintf("file is %d bytes — cannot contain the 8-byte safetensors length prefix", fileSize),
 			CWE:             "CWE-1284",
@@ -133,11 +132,11 @@ func (s *safetensorsValidator) validateFile(path string) []providers.Finding {
 	// Read the 8-byte length prefix.
 	prefix := make([]byte, safetensorsLengthPrefix)
 	if _, err := io.ReadFull(f, prefix); err != nil {
-		return []providers.Finding{{
+		return []Finding{{
 			Rule:            "aibom-safetensors-header-overflow",
-			Severity:        providers.SeverityCritical,
-			Confidence:      providers.ConfidenceHigh,
-			ConfidenceLabel: providers.ConfidenceHigh.String(),
+			Severity:        SeverityCritical,
+			Confidence:      ConfidenceHigh,
+			ConfidenceLabel: ConfidenceHigh.String(),
 			File:            path,
 			Message:         "could not read 8-byte safetensors length prefix: " + err.Error(),
 			CWE:             "CWE-1284",
@@ -147,11 +146,11 @@ func (s *safetensorsValidator) validateFile(path string) []providers.Finding {
 
 	// Empty header — strictly malformed under the spec.
 	if headerLen == 0 {
-		return []providers.Finding{{
+		return []Finding{{
 			Rule:            "aibom-safetensors-empty-header",
-			Severity:        providers.SeverityWarning,
-			Confidence:      providers.ConfidenceHigh,
-			ConfidenceLabel: providers.ConfidenceHigh.String(),
+			Severity:        SeverityWarning,
+			Confidence:      ConfidenceHigh,
+			ConfidenceLabel: ConfidenceHigh.String(),
 			File:            path,
 			Message:         "safetensors header length is 0 — file declares no tensors",
 			CWE:             "CWE-1284",
@@ -160,11 +159,11 @@ func (s *safetensorsValidator) validateFile(path string) []providers.Finding {
 
 	// Header overflow checks: must fit in the file AND under the configured cap.
 	if headerLen > maxSafetensorsHeaderBytes {
-		return []providers.Finding{{
+		return []Finding{{
 			Rule:            "aibom-safetensors-header-overflow",
-			Severity:        providers.SeverityCritical,
-			Confidence:      providers.ConfidenceHigh,
-			ConfidenceLabel: providers.ConfidenceHigh.String(),
+			Severity:        SeverityCritical,
+			Confidence:      ConfidenceHigh,
+			ConfidenceLabel: ConfidenceHigh.String(),
 			File:            path,
 			Message: fmt.Sprintf(
 				"safetensors header length %d exceeds the %d-byte safety cap",
@@ -173,11 +172,11 @@ func (s *safetensorsValidator) validateFile(path string) []providers.Finding {
 		}}
 	}
 	if int64(headerLen) > fileSize-safetensorsLengthPrefix {
-		return []providers.Finding{{
+		return []Finding{{
 			Rule:            "aibom-safetensors-header-overflow",
-			Severity:        providers.SeverityCritical,
-			Confidence:      providers.ConfidenceHigh,
-			ConfidenceLabel: providers.ConfidenceHigh.String(),
+			Severity:        SeverityCritical,
+			Confidence:      ConfidenceHigh,
+			ConfidenceLabel: ConfidenceHigh.String(),
 			File:            path,
 			Message: fmt.Sprintf(
 				"safetensors header length %d exceeds remaining file size %d",
@@ -189,11 +188,11 @@ func (s *safetensorsValidator) validateFile(path string) []providers.Finding {
 	// Read the JSON header.
 	headerBytes := make([]byte, headerLen)
 	if _, err := io.ReadFull(f, headerBytes); err != nil {
-		return []providers.Finding{{
+		return []Finding{{
 			Rule:            "aibom-safetensors-header-overflow",
-			Severity:        providers.SeverityCritical,
-			Confidence:      providers.ConfidenceHigh,
-			ConfidenceLabel: providers.ConfidenceHigh.String(),
+			Severity:        SeverityCritical,
+			Confidence:      ConfidenceHigh,
+			ConfidenceLabel: ConfidenceHigh.String(),
 			File:            path,
 			Message:         "could not read declared header bytes: " + err.Error(),
 			CWE:             "CWE-1284",
@@ -202,11 +201,11 @@ func (s *safetensorsValidator) validateFile(path string) []providers.Finding {
 
 	header := safetensorsHeader{}
 	if err := json.Unmarshal(headerBytes, &header); err != nil {
-		return []providers.Finding{{
+		return []Finding{{
 			Rule:            "aibom-safetensors-malformed-json",
-			Severity:        providers.SeverityHigh,
-			Confidence:      providers.ConfidenceHigh,
-			ConfidenceLabel: providers.ConfidenceHigh.String(),
+			Severity:        SeverityHigh,
+			Confidence:      ConfidenceHigh,
+			ConfidenceLabel: ConfidenceHigh.String(),
 			File:            path,
 			Message:         "safetensors header is not valid JSON: " + err.Error(),
 			CWE:             "CWE-1284",
@@ -215,7 +214,7 @@ func (s *safetensorsValidator) validateFile(path string) []providers.Finding {
 
 	// Pre-decode raw-header sweep for pickle magic JSON-escape sequences. JSON
 	// cannot encode 0x80 directly (invalid UTF-8), so a real attacker is
-	// forced to use -style escapes; we catch them on the wire before
+	// forced to use -style escapes; we catch them on the wire before
 	// any UTF-8 round-tripping has a chance to mask the bytes.
 	rawHeaderFindings := scanRawHeaderForPickle(path, headerBytes)
 
@@ -223,7 +222,7 @@ func (s *safetensorsValidator) validateFile(path string) []providers.Finding {
 	// the maximum legal end-offset is fileSize - 8 - headerLen.
 	payloadSize := fileSize - safetensorsLengthPrefix - int64(headerLen)
 
-	var findings []providers.Finding
+	var findings []Finding
 	findings = append(findings, rawHeaderFindings...)
 
 	// Walk the header entries. Sort keys so test output is deterministic
@@ -251,11 +250,11 @@ func (s *safetensorsValidator) validateFile(path string) []providers.Finding {
 
 		var tensor safetensorsTensor
 		if err := json.Unmarshal(raw, &tensor); err != nil {
-			findings = append(findings, providers.Finding{
+			findings = append(findings, Finding{
 				Rule:            "aibom-safetensors-malformed-json",
-				Severity:        providers.SeverityHigh,
-				Confidence:      providers.ConfidenceHigh,
-				ConfidenceLabel: providers.ConfidenceHigh.String(),
+				Severity:        SeverityHigh,
+				Confidence:      ConfidenceHigh,
+				ConfidenceLabel: ConfidenceHigh.String(),
 				File:            path,
 				Message:         fmt.Sprintf("tensor %q has malformed descriptor: %v", name, err),
 				CWE:             "CWE-1284",
@@ -265,11 +264,11 @@ func (s *safetensorsValidator) validateFile(path string) []providers.Finding {
 
 		// Validate dtype.
 		if !patterns.ValidSafetensorDtypes[tensor.Dtype] {
-			findings = append(findings, providers.Finding{
+			findings = append(findings, Finding{
 				Rule:            "aibom-safetensors-invalid-dtype",
-				Severity:        providers.SeverityWarning,
-				Confidence:      providers.ConfidenceHigh,
-				ConfidenceLabel: providers.ConfidenceHigh.String(),
+				Severity:        SeverityWarning,
+				Confidence:      ConfidenceHigh,
+				ConfidenceLabel: ConfidenceHigh.String(),
 				File:            path,
 				Message:         fmt.Sprintf("tensor %q has unknown dtype %q", name, tensor.Dtype),
 				CWE:             "CWE-20",
@@ -279,11 +278,11 @@ func (s *safetensorsValidator) validateFile(path string) []providers.Finding {
 		// Validate shape — every dim must be non-negative.
 		for i, dim := range tensor.Shape {
 			if dim < 0 {
-				findings = append(findings, providers.Finding{
+				findings = append(findings, Finding{
 					Rule:            "aibom-safetensors-malformed-json",
-					Severity:        providers.SeverityHigh,
-					Confidence:      providers.ConfidenceHigh,
-					ConfidenceLabel: providers.ConfidenceHigh.String(),
+					Severity:        SeverityHigh,
+					Confidence:      ConfidenceHigh,
+					ConfidenceLabel: ConfidenceHigh.String(),
 					File:            path,
 					Message:         fmt.Sprintf("tensor %q shape[%d] is negative: %d", name, i, dim),
 					CWE:             "CWE-1284",
@@ -294,11 +293,11 @@ func (s *safetensorsValidator) validateFile(path string) []providers.Finding {
 		// Validate offsets.
 		start, end := tensor.DataOffsets[0], tensor.DataOffsets[1]
 		if start < 0 || end < 0 || end < start {
-			findings = append(findings, providers.Finding{
+			findings = append(findings, Finding{
 				Rule:            "aibom-safetensors-tensor-overflow",
-				Severity:        providers.SeverityHigh,
-				Confidence:      providers.ConfidenceHigh,
-				ConfidenceLabel: providers.ConfidenceHigh.String(),
+				Severity:        SeverityHigh,
+				Confidence:      ConfidenceHigh,
+				ConfidenceLabel: ConfidenceHigh.String(),
 				File:            path,
 				Message: fmt.Sprintf(
 					"tensor %q has invalid data_offsets [%d, %d]",
@@ -308,11 +307,11 @@ func (s *safetensorsValidator) validateFile(path string) []providers.Finding {
 			continue
 		}
 		if int64(end) > payloadSize {
-			findings = append(findings, providers.Finding{
+			findings = append(findings, Finding{
 				Rule:            "aibom-safetensors-tensor-overflow",
-				Severity:        providers.SeverityHigh,
-				Confidence:      providers.ConfidenceHigh,
-				ConfidenceLabel: providers.ConfidenceHigh.String(),
+				Severity:        SeverityHigh,
+				Confidence:      ConfidenceHigh,
+				ConfidenceLabel: ConfidenceHigh.String(),
 				File:            path,
 				Message: fmt.Sprintf(
 					"tensor %q data_offset end %d exceeds payload size %d",
@@ -338,11 +337,11 @@ func (s *safetensorsValidator) validateFile(path string) []providers.Finding {
 		// Overlap exists when the next tensor begins before the previous one ends.
 		// safetensors offsets are half-open [start, end), so equality is fine.
 		if cur.start < prev.end {
-			findings = append(findings, providers.Finding{
+			findings = append(findings, Finding{
 				Rule:            "aibom-safetensors-overlapping-tensors",
-				Severity:        providers.SeverityHigh,
-				Confidence:      providers.ConfidenceHigh,
-				ConfidenceLabel: providers.ConfidenceHigh.String(),
+				Severity:        SeverityHigh,
+				Confidence:      ConfidenceHigh,
+				ConfidenceLabel: ConfidenceHigh.String(),
 				File:            path,
 				Message: fmt.Sprintf(
 					"tensors %q [%d,%d) and %q [%d,%d) claim overlapping byte ranges",
@@ -353,11 +352,11 @@ func (s *safetensorsValidator) validateFile(path string) []providers.Finding {
 	}
 
 	if len(findings) == 0 {
-		return []providers.Finding{{
+		return []Finding{{
 			Rule:            "aibom-safetensors-clean",
-			Severity:        providers.SeverityInfo,
-			Confidence:      providers.ConfidenceHigh,
-			ConfidenceLabel: providers.ConfidenceHigh.String(),
+			Severity:        SeverityInfo,
+			Confidence:      ConfidenceHigh,
+			ConfidenceLabel: ConfidenceHigh.String(),
 			File:            path,
 			Message: fmt.Sprintf(
 				"safetensors header is well-formed (%d tensors, %d header bytes)",
@@ -371,14 +370,14 @@ func (s *safetensorsValidator) validateFile(path string) []providers.Finding {
 // shell metacharacters, URLs, and pickle magic bytes. It delegates the
 // prompt-injection portion to RuleMatcher.ScanDescription so detection
 // patterns stay centralised.
-func (s *safetensorsValidator) scanMetadata(path string, raw json.RawMessage) []providers.Finding {
+func (s *safetensorsValidator) scanMetadata(path string, raw json.RawMessage) []Finding {
 	var meta map[string]string
 	if err := json.Unmarshal(raw, &meta); err != nil {
-		return []providers.Finding{{
+		return []Finding{{
 			Rule:            "aibom-safetensors-malformed-json",
-			Severity:        providers.SeverityHigh,
-			Confidence:      providers.ConfidenceHigh,
-			ConfidenceLabel: providers.ConfidenceHigh.String(),
+			Severity:        SeverityHigh,
+			Confidence:      ConfidenceHigh,
+			ConfidenceLabel: ConfidenceHigh.String(),
 			File:            path,
 			Message:         "__metadata__ is not a string→string map: " + err.Error(),
 			CWE:             "CWE-1284",
@@ -392,7 +391,7 @@ func (s *safetensorsValidator) scanMetadata(path string, raw json.RawMessage) []
 	}
 	sort.Strings(keys)
 
-	var findings []providers.Finding
+	var findings []Finding
 	for _, k := range keys {
 		v := meta[k]
 
@@ -400,11 +399,11 @@ func (s *safetensorsValidator) scanMetadata(path string, raw json.RawMessage) []
 		// re-tagged with a safetensors-scoped rule id so users can filter
 		// AIBOM findings discretely from MCP tool descriptions.
 		for _, f := range s.rules.ScanDescription(v) {
-			findings = append(findings, providers.Finding{
+			findings = append(findings, Finding{
 				Rule:            "aibom-safetensors-suspicious-metadata",
-				Severity:        providers.SeverityWarning,
-				Confidence:      providers.ConfidenceMedium,
-				ConfidenceLabel: providers.ConfidenceMedium.String(),
+				Severity:        SeverityWarning,
+				Confidence:      ConfidenceMedium,
+				ConfidenceLabel: ConfidenceMedium.String(),
 				File:            path,
 				Message: fmt.Sprintf(
 					"metadata key %q matched %s: %s",
@@ -416,11 +415,11 @@ func (s *safetensorsValidator) scanMetadata(path string, raw json.RawMessage) []
 		// Shell metacharacters.
 		for _, mc := range patterns.SafetensorsShellMetacharacters {
 			if strings.Contains(v, mc) {
-				findings = append(findings, providers.Finding{
+				findings = append(findings, Finding{
 					Rule:            "aibom-safetensors-suspicious-metadata",
-					Severity:        providers.SeverityWarning,
-					Confidence:      providers.ConfidenceMedium,
-					ConfidenceLabel: providers.ConfidenceMedium.String(),
+					Severity:        SeverityWarning,
+					Confidence:      ConfidenceMedium,
+					ConfidenceLabel: ConfidenceMedium.String(),
 					File:            path,
 					Message: fmt.Sprintf(
 						"metadata key %q contains shell metacharacter %q",
@@ -435,11 +434,11 @@ func (s *safetensorsValidator) scanMetadata(path string, raw json.RawMessage) []
 		lower := strings.ToLower(v)
 		for _, prefix := range patterns.SafetensorsURLPrefixes {
 			if strings.Contains(lower, prefix) {
-				findings = append(findings, providers.Finding{
+				findings = append(findings, Finding{
 					Rule:            "aibom-safetensors-suspicious-metadata",
-					Severity:        providers.SeverityWarning,
-					Confidence:      providers.ConfidenceMedium,
-					ConfidenceLabel: providers.ConfidenceMedium.String(),
+					Severity:        SeverityWarning,
+					Confidence:      ConfidenceMedium,
+					ConfidenceLabel: ConfidenceMedium.String(),
 					File:            path,
 					Message: fmt.Sprintf(
 						"metadata key %q contains URL/scheme %q",
@@ -465,16 +464,16 @@ func (s *safetensorsValidator) scanMetadata(path string, raw json.RawMessage) []
 // pickle protocol-2/3/4/5 magic bytes encoded as -style JSON escapes.
 // Any match emits a suspicious-metadata finding. Detection is case-insensitive
 // because JSON spec allows both upper- and lower-case hex digits.
-func scanRawHeaderForPickle(path string, raw []byte) []providers.Finding {
+func scanRawHeaderForPickle(path string, raw []byte) []Finding {
 	lower := strings.ToLower(string(raw))
-	var findings []providers.Finding
+	var findings []Finding
 	for _, esc := range patterns.SafetensorsPickleMagicEscapes {
 		if strings.Contains(lower, strings.ToLower(esc)) {
-			findings = append(findings, providers.Finding{
+			findings = append(findings, Finding{
 				Rule:            "aibom-safetensors-suspicious-metadata",
-				Severity:        providers.SeverityWarning,
-				Confidence:      providers.ConfidenceMedium,
-				ConfidenceLabel: providers.ConfidenceMedium.String(),
+				Severity:        SeverityWarning,
+				Confidence:      ConfidenceMedium,
+				ConfidenceLabel: ConfidenceMedium.String(),
 				File:            path,
 				Message: fmt.Sprintf(
 					"header bytes contain JSON-escaped pickle protocol magic %q",

@@ -1,4 +1,4 @@
-package aibom
+package providers
 
 import (
 	"archive/zip"
@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"github.com/oxvault/scanner/patterns"
-	"github.com/oxvault/scanner/providers"
 )
 
 // Pickle disassembler — pure-Go opcode walker.
@@ -55,8 +54,8 @@ func NewPickleAnalyzer() PickleAnalyzer {
 //
 // Files that look like a ZIP archive (PyTorch save format) are unwrapped
 // transparently and the inner data.pkl is analysed instead.
-func (p *pickleAnalyzer) AnalyzeFile(path string) []providers.Finding {
-	return analyzeFile(path, 0)
+func (p *pickleAnalyzer) AnalyzeFile(path string) []Finding {
+	return analyzePickleFile(path, 0)
 }
 
 // AnalyzeDirectory walks dir and analyses every pickle/torch file found.
@@ -64,32 +63,32 @@ func (p *pickleAnalyzer) AnalyzeFile(path string) []providers.Finding {
 // In production the AIBOMComposer owns directory walking, so this method
 // is rarely called — but keeping it functional satisfies the interface and
 // makes the analyzer usable standalone.
-func (p *pickleAnalyzer) AnalyzeDirectory(dir string) []providers.Finding {
-	var findings []providers.Finding
+func (p *pickleAnalyzer) AnalyzeDirectory(dir string) []Finding {
+	var findings []Finding
 	_ = filepath.Walk(dir, func(path string, info os.FileInfo, walkErr error) error {
 		if walkErr != nil {
 			return nil
 		}
 		if info.IsDir() {
-			if providers.IsExcludedDir(filepath.Base(path)) {
+			if IsExcludedDir(filepath.Base(path)) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if DetectArtifactFormat(path) != providers.FormatPickle {
+		if DetectArtifactFormat(path) != FormatPickle {
 			return nil
 		}
-		findings = append(findings, analyzeFile(path, 0)...)
+		findings = append(findings, analyzePickleFile(path, 0)...)
 		return nil
 	})
 	return findings
 }
 
-// analyzeFile is the actual entry point. It opens the file, applies the
-// outer-file size cap via io.LimitReader, and then dispatches to analyzeBytes
+// analyzePickleFile is the actual entry point. It opens the file, applies the
+// outer-file size cap via io.LimitReader, and then dispatches to analyzePickleBytes
 // which enforces the recursion-depth guard for every code path (file → zip →
 // inner pickle).
-func analyzeFile(path string, depth int) []providers.Finding {
+func analyzePickleFile(path string, depth int) []Finding {
 	f, err := os.Open(path) //nolint:gosec // path is filesystem-walk scoped to the scan target.
 	if err != nil {
 		return nil
@@ -104,11 +103,11 @@ func analyzeFile(path string, depth int) []providers.Finding {
 	}
 
 	if int64(len(data)) > int64(maxFileBytes) {
-		return []providers.Finding{{
+		return []Finding{{
 			Rule:            "aibom-pickle-truncated",
-			Severity:        providers.SeverityWarning,
-			Confidence:      providers.ConfidenceHigh,
-			ConfidenceLabel: providers.ConfidenceHigh.String(),
+			Severity:        SeverityWarning,
+			Confidence:      ConfidenceHigh,
+			ConfidenceLabel: ConfidenceHigh.String(),
 			File:            path,
 			Message: fmt.Sprintf(
 				"pickle file exceeds %d-byte safety cap — disassembly skipped",
@@ -117,10 +116,10 @@ func analyzeFile(path string, depth int) []providers.Finding {
 		}}
 	}
 
-	return analyzeBytes(path, data, depth)
+	return analyzePickleBytes(path, data, depth)
 }
 
-// analyzeBytes inspects a byte slice. It first enforces maxRecursionDepth so
+// analyzePickleBytes inspects a byte slice. It first enforces maxRecursionDepth so
 // that ZIP-wrapped pickles cannot bypass the guard via repeated zip → pickle
 // recursion, then tests the ZIP magic header (PyTorch zip-wrapped pickles); if
 // matched, it descends into the archive and analyses the embedded data.pkl
@@ -128,13 +127,13 @@ func analyzeFile(path string, depth int) []providers.Finding {
 //
 // A defer recover() wraps every ZIP path because Go's archive/zip stdlib has
 // historically panicked on malformed inputs — defence in depth.
-func analyzeBytes(path string, data []byte, depth int) (findings []providers.Finding) {
+func analyzePickleBytes(path string, data []byte, depth int) (findings []Finding) {
 	if depth > maxRecursionDepth {
-		return []providers.Finding{{
+		return []Finding{{
 			Rule:            "aibom-pickle-truncated",
-			Severity:        providers.SeverityWarning,
-			Confidence:      providers.ConfidenceHigh,
-			ConfidenceLabel: providers.ConfidenceHigh.String(),
+			Severity:        SeverityWarning,
+			Confidence:      ConfidenceHigh,
+			ConfidenceLabel: ConfidenceHigh.String(),
 			File:            path,
 			Message: fmt.Sprintf(
 				"pickle recursion depth %d exceeded — refusing to descend further",
@@ -146,11 +145,11 @@ func analyzeBytes(path string, data []byte, depth int) (findings []providers.Fin
 	defer func() {
 		// Defensive: a malformed ZIP must NEVER take down the scanner.
 		if r := recover(); r != nil {
-			findings = append(findings, providers.Finding{
+			findings = append(findings, Finding{
 				Rule:            "aibom-pickle-truncated",
-				Severity:        providers.SeverityWarning,
-				Confidence:      providers.ConfidenceHigh,
-				ConfidenceLabel: providers.ConfidenceHigh.String(),
+				Severity:        SeverityWarning,
+				Confidence:      ConfidenceHigh,
+				ConfidenceLabel: ConfidenceHigh.String(),
 				File:            path,
 				Message:         fmt.Sprintf("panic during ZIP/pickle analysis: %v", r),
 				CWE:             "CWE-1287",
@@ -159,7 +158,7 @@ func analyzeBytes(path string, data []byte, depth int) (findings []providers.Fin
 	}()
 
 	if isZipArchive(data) {
-		return analyzeZip(path, data, depth)
+		return analyzePickleZip(path, data, depth)
 	}
 
 	d := newDisassembler(path, data)
@@ -173,29 +172,29 @@ func isZipArchive(data []byte) bool {
 	return len(data) >= 4 && data[0] == 'P' && data[1] == 'K' && data[2] == 0x03 && data[3] == 0x04
 }
 
-// analyzeZip extracts the inner pickle entry from a PyTorch zip-wrapped file
+// analyzePickleZip extracts the inner pickle entry from a PyTorch zip-wrapped file
 // and recursively analyses it. Common entry names: "archive/data.pkl",
 // "data.pkl", or any "*/data.pkl" inside the archive.
-func analyzeZip(path string, data []byte, depth int) []providers.Finding {
+func analyzePickleZip(path string, data []byte, depth int) []Finding {
 	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
-		return []providers.Finding{{
+		return []Finding{{
 			Rule:            "aibom-pickle-truncated",
-			Severity:        providers.SeverityWarning,
-			Confidence:      providers.ConfidenceHigh,
-			ConfidenceLabel: providers.ConfidenceHigh.String(),
+			Severity:        SeverityWarning,
+			Confidence:      ConfidenceHigh,
+			ConfidenceLabel: ConfidenceHigh.String(),
 			File:            path,
 			Message:         "PyTorch ZIP archive could not be parsed: " + err.Error(),
 			CWE:             "CWE-1287",
 		}}
 	}
 
-	findings := []providers.Finding{
+	findings := []Finding{
 		{
 			Rule:            "aibom-pickle-pytorch-zip",
-			Severity:        providers.SeverityInfo,
-			Confidence:      providers.ConfidenceHigh,
-			ConfidenceLabel: providers.ConfidenceHigh.String(),
+			Severity:        SeverityInfo,
+			Confidence:      ConfidenceHigh,
+			ConfidenceLabel: ConfidenceHigh.String(),
 			File:            path,
 			Message:         "PyTorch ZIP archive detected — recursing into inner pickle entry",
 		},
@@ -212,11 +211,11 @@ func analyzeZip(path string, data []byte, depth int) []providers.Finding {
 			// Quadratic-DoS guard: refuse to expand more than maxInnerPickles
 			// pickle entries from a single archive. A real PyTorch zip never
 			// contains more than a handful.
-			findings = append(findings, providers.Finding{
+			findings = append(findings, Finding{
 				Rule:            "aibom-pickle-truncated",
-				Severity:        providers.SeverityWarning,
-				Confidence:      providers.ConfidenceHigh,
-				ConfidenceLabel: providers.ConfidenceHigh.String(),
+				Severity:        SeverityWarning,
+				Confidence:      ConfidenceHigh,
+				ConfidenceLabel: ConfidenceHigh.String(),
 				File:            path,
 				Message: fmt.Sprintf(
 					"PyTorch ZIP archive contains more than %d pickle entries — analysis halted",
@@ -238,7 +237,7 @@ func analyzeZip(path string, data []byte, depth int) []providers.Finding {
 		}
 		// Build a virtual path that points at the inner entry for clearer findings.
 		innerPath := path + "::" + f.Name
-		findings = append(findings, analyzeBytes(innerPath, inner, depth+1)...)
+		findings = append(findings, analyzePickleBytes(innerPath, inner, depth+1)...)
 	}
 
 	return findings
@@ -853,25 +852,25 @@ func (d *disassembler) markLastGlobalReduced(qualified string) {
 }
 
 // emit converts collected globals + stream state into Findings.
-func (d *disassembler) emit() []providers.Finding {
-	var findings []providers.Finding
+func (d *disassembler) emit() []Finding {
+	var findings []Finding
 
 	if d.hadOpcodeOverflow {
-		findings = append(findings, providers.Finding{
+		findings = append(findings, Finding{
 			Rule:            "aibom-pickle-truncated",
-			Severity:        providers.SeverityWarning,
-			Confidence:      providers.ConfidenceHigh,
-			ConfidenceLabel: providers.ConfidenceHigh.String(),
+			Severity:        SeverityWarning,
+			Confidence:      ConfidenceHigh,
+			ConfidenceLabel: ConfidenceHigh.String(),
 			File:            d.path,
 			Message:         fmt.Sprintf("pickle stream exceeded %d opcodes — disassembly halted", maxOpcodes),
 			CWE:             "CWE-1287",
 		})
 	} else if d.truncated {
-		findings = append(findings, providers.Finding{
+		findings = append(findings, Finding{
 			Rule:            "aibom-pickle-truncated",
-			Severity:        providers.SeverityWarning,
-			Confidence:      providers.ConfidenceHigh,
-			ConfidenceLabel: providers.ConfidenceHigh.String(),
+			Severity:        SeverityWarning,
+			Confidence:      ConfidenceHigh,
+			ConfidenceLabel: ConfidenceHigh.String(),
 			File:            d.path,
 			Message:         "pickle stream truncated or malformed: " + d.truncatedReason,
 			CWE:             "CWE-1287",
@@ -885,7 +884,7 @@ func (d *disassembler) emit() []providers.Finding {
 		if !ok {
 			continue
 		}
-		if f.Severity >= providers.SeverityHigh {
+		if f.Severity >= SeverityHigh {
 			dangerousSeen = true
 		}
 		findings = append(findings, f)
@@ -894,11 +893,11 @@ func (d *disassembler) emit() []providers.Finding {
 	// If the file ONLY contains allowlisted ML globals, surface a single
 	// summary INFO so the report is not silent on safe files.
 	if !dangerousSeen && len(d.globals) > 0 && allOnlyAllowlisted(d.globals) {
-		findings = append(findings, providers.Finding{
+		findings = append(findings, Finding{
 			Rule:            "aibom-pickle-allowlisted",
-			Severity:        providers.SeverityInfo,
-			Confidence:      providers.ConfidenceHigh,
-			ConfidenceLabel: providers.ConfidenceHigh.String(),
+			Severity:        SeverityInfo,
+			Confidence:      ConfidenceHigh,
+			ConfidenceLabel: ConfidenceHigh.String(),
 			File:            d.path,
 			Message:         fmt.Sprintf("pickle contains only allowlisted ML globals (%d refs) — appears safe", len(d.globals)),
 		})
@@ -911,16 +910,16 @@ func (d *disassembler) emit() []providers.Finding {
 // signalling whether the ref produced a finding at all (some globals — those
 // matching allowlist AND not reduced suspiciously — produce nothing here;
 // their summary is emitted by allOnlyAllowlisted at the file level).
-func classifyGlobal(path string, g globalRef) (providers.Finding, bool) {
+func classifyGlobal(path string, g globalRef) (Finding, bool) {
 	q := g.qualified
 
 	// Critical tier — always emits, regardless of REDUCE.
 	if rationale, ok := patterns.DangerousGlobalsCritical[q]; ok {
-		return providers.Finding{
+		return Finding{
 			Rule:            ruleForCritical(q),
-			Severity:        providers.SeverityCritical,
-			Confidence:      providers.ConfidenceHigh,
-			ConfidenceLabel: providers.ConfidenceHigh.String(),
+			Severity:        SeverityCritical,
+			Confidence:      ConfidenceHigh,
+			ConfidenceLabel: ConfidenceHigh.String(),
 			File:            path,
 			Message: fmt.Sprintf(
 				"dangerous pickle GLOBAL %q at offset 0x%X — %s (CWE-502)",
@@ -931,11 +930,11 @@ func classifyGlobal(path string, g globalRef) (providers.Finding, bool) {
 
 	// High tier — network egress.
 	if rationale, ok := patterns.DangerousGlobalsHigh[q]; ok {
-		return providers.Finding{
+		return Finding{
 			Rule:            "aibom-pickle-network",
-			Severity:        providers.SeverityHigh,
-			Confidence:      providers.ConfidenceHigh,
-			ConfidenceLabel: providers.ConfidenceHigh.String(),
+			Severity:        SeverityHigh,
+			Confidence:      ConfidenceHigh,
+			ConfidenceLabel: ConfidenceHigh.String(),
 			File:            path,
 			Message: fmt.Sprintf(
 				"network-capable GLOBAL %q at offset 0x%X — %s (CWE-502)",
@@ -949,11 +948,11 @@ func classifyGlobal(path string, g globalRef) (providers.Finding, bool) {
 	// egress (High); emit at WARNING to match the documented tier semantics
 	// in patterns/aibom.go.
 	if rationale, ok := patterns.DangerousGlobalsMedium[q]; ok {
-		return providers.Finding{
+		return Finding{
 			Rule:            "aibom-pickle-filesystem",
-			Severity:        providers.SeverityWarning,
-			Confidence:      providers.ConfidenceMedium,
-			ConfidenceLabel: providers.ConfidenceMedium.String(),
+			Severity:        SeverityWarning,
+			Confidence:      ConfidenceMedium,
+			ConfidenceLabel: ConfidenceMedium.String(),
 			File:            path,
 			Message: fmt.Sprintf(
 				"destructive-filesystem GLOBAL %q at offset 0x%X — %s (CWE-502)",
@@ -964,18 +963,18 @@ func classifyGlobal(path string, g globalRef) (providers.Finding, bool) {
 
 	// Allowlisted — produce no per-ref finding (a single summary fires later).
 	if patterns.IsAllowedMLGlobal(q) {
-		return providers.Finding{}, false
+		return Finding{}, false
 	}
 
 	// Unknown global — only flag if REDUCE consumed it. A bare GLOBAL
 	// without REDUCE is usually a class reference that pickle uses to
 	// reconstruct an instance; flagging every one would be noisy.
 	if g.reduced {
-		return providers.Finding{
+		return Finding{
 			Rule:            "aibom-pickle-reduce-suspicious",
-			Severity:        providers.SeverityHigh,
-			Confidence:      providers.ConfidenceMedium,
-			ConfidenceLabel: providers.ConfidenceMedium.String(),
+			Severity:        SeverityHigh,
+			Confidence:      ConfidenceMedium,
+			ConfidenceLabel: ConfidenceMedium.String(),
 			File:            path,
 			Message: fmt.Sprintf(
 				"REDUCE invokes non-allowlisted GLOBAL %q at offset 0x%X (CWE-502)",
@@ -984,7 +983,7 @@ func classifyGlobal(path string, g globalRef) (providers.Finding, bool) {
 		}, true
 	}
 
-	return providers.Finding{}, false
+	return Finding{}, false
 }
 
 // allOnlyAllowlisted returns true when every ref is in the ML allowlist.

@@ -1,4 +1,4 @@
-package aibom_test
+package providers_test
 
 import (
 	"os"
@@ -6,23 +6,22 @@ import (
 	"testing"
 
 	"github.com/oxvault/scanner/providers"
-	"github.com/oxvault/scanner/providers/aibom"
 	"github.com/oxvault/scanner/testutil"
 )
 
 // ── interface guards ─────────────────────────────────────────────────────────
 //
-// These guards verify the testutil mocks satisfy the aibom interfaces at
-// compile time. They live in the test package to avoid creating an
-// aibom -> testutil dependency in production code.
+// These guards verify the testutil mocks satisfy the AIBOM interfaces at
+// compile time. They live in the test package to avoid creating a
+// providers -> testutil dependency in production code.
 
 var (
-	_ aibom.PickleAnalyzer       = (*testutil.MockPickleAnalyzer)(nil)
-	_ aibom.ONNXValidator        = (*testutil.MockONNXValidator)(nil)
-	_ aibom.SafetensorsValidator = (*testutil.MockSafetensorsValidator)(nil)
-	_ aibom.ModelCardChecker     = (*testutil.MockModelCardChecker)(nil)
-	_ aibom.SignatureVerifier    = (*testutil.MockSignatureVerifier)(nil)
-	_ aibom.AIBOMComposer        = (*testutil.MockAIBOMComposer)(nil)
+	_ providers.PickleAnalyzer       = (*testutil.MockPickleAnalyzer)(nil)
+	_ providers.ONNXValidator        = (*testutil.MockONNXValidator)(nil)
+	_ providers.SafetensorsValidator = (*testutil.MockSafetensorsValidator)(nil)
+	_ providers.ModelCardChecker     = (*testutil.MockModelCardChecker)(nil)
+	_ providers.SignatureVerifier    = (*testutil.MockSignatureVerifier)(nil)
+	_ providers.AIBOMComposer        = (*testutil.MockAIBOMComposer)(nil)
 )
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -45,17 +44,22 @@ func newComposerMocks() composerMocks {
 	}
 }
 
-func (m composerMocks) wire() aibom.AIBOMComposer {
-	return aibom.NewComposer(
-		aibom.WithPickleAnalyzer(m.pickle),
-		aibom.WithONNXValidator(m.onnx),
-		aibom.WithSafetensorsValidator(m.safetensors),
-		aibom.WithModelCardChecker(m.modelCard),
-		aibom.WithSignatureVerifier(m.signature),
+func (m composerMocks) wire() providers.AIBOMComposer {
+	return providers.NewComposer(
+		providers.WithPickleAnalyzer(m.pickle),
+		providers.WithONNXValidator(m.onnx),
+		providers.WithSafetensorsValidator(m.safetensors),
+		providers.WithModelCardChecker(m.modelCard),
+		providers.WithSignatureVerifier(m.signature),
 	)
 }
 
-func writeFile(t *testing.T, dir, name string, body []byte) string {
+// writeAibomFile creates a file at dir/name with the given binary body. It
+// is named to avoid collision with the existing string-content writeFile
+// helper in depaudit_test.go (which lives in the internal `providers`
+// package — these tests are in `providers_test`, but the rename keeps the
+// distinction obvious for future readers).
+func writeAibomFile(t *testing.T, dir, name string, body []byte) string {
 	t.Helper()
 	path := filepath.Join(dir, name)
 	if err := os.WriteFile(path, body, 0o644); err != nil {
@@ -114,7 +118,7 @@ func TestComposer_Scan_File_DispatchesByFormat(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
-			path := writeFile(t, dir, tt.filename, tt.body)
+			path := writeAibomFile(t, dir, tt.filename, tt.body)
 
 			mocks := newComposerMocks()
 			c := mocks.wire()
@@ -132,7 +136,7 @@ func TestComposer_Scan_File_DispatchesByFormat(t *testing.T) {
 
 func TestComposer_Scan_File_UnknownFormatDispatchesNothing(t *testing.T) {
 	dir := t.TempDir()
-	path := writeFile(t, dir, "random.txt", []byte("just text"))
+	path := writeAibomFile(t, dir, "random.txt", []byte("just text"))
 
 	mocks := newComposerMocks()
 	c := mocks.wire()
@@ -167,12 +171,12 @@ func TestComposer_Scan_NonexistentPathReturnsNil(t *testing.T) {
 
 func TestComposer_Scan_Directory_DispatchesEachFileByFormat(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "weights.pkl", []byte{0x80, 0x04})
-	writeFile(t, dir, "graph.onnx", []byte{0x08, 0x01})
-	writeFile(t, dir, "weights.safetensors", []byte(`{"a":1}`))
-	writeFile(t, dir, "README.md", []byte("# card"))
-	writeFile(t, dir, "weights.pkl.sigstore", []byte("{}"))
-	writeFile(t, dir, "ignore-me.txt", []byte("noise"))
+	writeAibomFile(t, dir, "weights.pkl", []byte{0x80, 0x04})
+	writeAibomFile(t, dir, "graph.onnx", []byte{0x08, 0x01})
+	writeAibomFile(t, dir, "weights.safetensors", []byte(`{"a":1}`))
+	writeAibomFile(t, dir, "README.md", []byte("# card"))
+	writeAibomFile(t, dir, "weights.pkl.sigstore", []byte("{}"))
+	writeAibomFile(t, dir, "ignore-me.txt", []byte("noise"))
 
 	mocks := newComposerMocks()
 	c := mocks.wire()
@@ -209,8 +213,8 @@ func TestComposer_Scan_Directory_DispatchesEachFileByFormat(t *testing.T) {
 
 func TestComposer_Scan_Directory_AggregatesFindings(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "a.pkl", []byte{0x80, 0x04})
-	writeFile(t, dir, "b.onnx", []byte{0x08, 0x01})
+	writeAibomFile(t, dir, "a.pkl", []byte{0x80, 0x04})
+	writeAibomFile(t, dir, "b.onnx", []byte{0x08, 0x01})
 
 	mocks := newComposerMocks()
 	mocks.pickle.AnalyzeFileResult = []providers.Finding{{Rule: "pickle-1"}}
@@ -240,9 +244,9 @@ func TestComposer_Scan_Directory_SkipsExcludedDirs(t *testing.T) {
 	if err := os.Mkdir(excluded, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, excluded, "hidden.pkl", []byte{0x80, 0x04})
+	writeAibomFile(t, excluded, "hidden.pkl", []byte{0x80, 0x04})
 	// Sanity artifact in the visible tree.
-	writeFile(t, dir, "visible.pkl", []byte{0x80, 0x04})
+	writeAibomFile(t, dir, "visible.pkl", []byte{0x80, 0x04})
 
 	mocks := newComposerMocks()
 	c := mocks.wire()
@@ -259,9 +263,9 @@ func TestNewComposer_DefaultsAreInstalledForMissingOptions(t *testing.T) {
 	// Construct with no options — the composer must still operate without
 	// panicking. Real default sub-providers may emit findings; we just
 	// assert the call completes safely.
-	c := aibom.NewComposer()
+	c := providers.NewComposer()
 
 	dir := t.TempDir()
-	path := writeFile(t, dir, "weights.pkl", []byte{0x80, 0x04})
+	path := writeAibomFile(t, dir, "weights.pkl", []byte{0x80, 0x04})
 	_ = c.Scan(path) // must not panic
 }
