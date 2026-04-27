@@ -78,8 +78,9 @@ func (n *netProbe) Probe(cmd string, args []string, timeout time.Duration) ([]Ne
 // ---------------------------------------------------------------------------
 
 // straceConnectRE matches:
-//   connect(3, {sa_family=AF_INET, sin_port=htons(443), sin_addr=inet_addr("93.184.216.34")}, 16)
-//   connect(3, {sa_family=AF_INET6, sin6_port=htons(443), sin6_addr=inet_pton(AF_INET6, "2606:2800::1")}, 28)
+//
+//	connect(3, {sa_family=AF_INET, sin_port=htons(443), sin_addr=inet_addr("93.184.216.34")}, 16)
+//	connect(3, {sa_family=AF_INET6, sin6_port=htons(443), sin6_addr=inet_pton(AF_INET6, "2606:2800::1")}, 28)
 //
 // Note: inet_addr( and inet_pton(AF_INET6, must both include the opening
 // parenthesis so the alternation is unambiguous.

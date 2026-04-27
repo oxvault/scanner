@@ -2,8 +2,8 @@ package engines
 
 import (
 	"errors"
-	"log/slog"
 	"io"
+	"log/slog"
 	"testing"
 
 	"github.com/oxvault/scanner/providers"

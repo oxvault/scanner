@@ -292,11 +292,11 @@ func (r *reporter) reportSARIF(findings []Finding) ([]byte, error) {
 		Confidence string `json:"confidence,omitempty"`
 	}
 	type sarifResult struct {
-		RuleID      string          `json:"ruleId"`
-		Level       string          `json:"level"`
-		Message     sarifMessage    `json:"message"`
-		Locations   []sarifLocation `json:"locations,omitempty"`
-		Properties  *sarifProperties `json:"properties,omitempty"`
+		RuleID     string           `json:"ruleId"`
+		Level      string           `json:"level"`
+		Message    sarifMessage     `json:"message"`
+		Locations  []sarifLocation  `json:"locations,omitempty"`
+		Properties *sarifProperties `json:"properties,omitempty"`
 	}
 	type sarifRun struct {
 		Tool struct {

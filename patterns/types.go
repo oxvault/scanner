@@ -54,10 +54,10 @@ func (s Severity) String() string {
 type RiskTier int
 
 const (
-	RiskTierLow    RiskTier = iota // Compute-only, data transformation
-	RiskTierMedium                 // Network requests, messaging
-	RiskTierHigh                   // Filesystem, database, infrastructure
-	RiskTierCritical               // Shell execution, code eval
+	RiskTierLow      RiskTier = iota // Compute-only, data transformation
+	RiskTierMedium                   // Network requests, messaging
+	RiskTierHigh                     // Filesystem, database, infrastructure
+	RiskTierCritical                 // Shell execution, code eval
 )
 
 func (t RiskTier) String() string {
@@ -92,7 +92,7 @@ type SourcePattern struct {
 	Pattern         *regexp.Regexp
 	Rule            string
 	Severity        Severity
-	Confidence      Confidence       // How certain is this finding?
+	Confidence      Confidence // How certain is this finding?
 	Message         string
 	Langs           []Language
 	CWE             string
