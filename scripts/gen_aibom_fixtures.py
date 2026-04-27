@@ -23,6 +23,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 OUT = ROOT / "testdata" / "aibom" / "safetensors"
 PICKLE_OUT = ROOT / "testdata" / "aibom" / "pickle"
+ONNX_OUT = ROOT / "testdata" / "aibom" / "onnx"
 
 
 def write_safetensors(
@@ -391,6 +392,243 @@ def gen_pickle_oversized_file() -> None:
         f.truncate(target_size)
 
 
+# ── onnx fixtures ───────────────────────────────────────────────────────────
+#
+# These fixtures exercise the providers/onnx.go protobuf-wire validator. We
+# hand-construct ONNX ModelProto bytes rather than relying on the `onnx`
+# python package (which is not installed in CI). Hand-construction is safer
+# too — a fixture NEVER needs to round-trip through any inference runtime
+# and so cannot accidentally execute a malicious operator on the developer's
+# box.
+#
+# Wire format crash course (see protobuf docs):
+#
+#   tag    = (field_number << 3) | wire_type
+#   varint = base-128 little-endian, MSB-set means "more bytes follow"
+#
+# Top-level ModelProto fields we emit:
+#   1  ir_version    (int64,   varint)
+#   2  producer_name (string,  length-delimited)
+#   7  graph         (message, length-delimited)
+#
+# GraphProto:
+#   1  node          (repeated NodeProto)
+#   5  initializer   (repeated TensorProto)
+#
+# NodeProto:
+#   4  op_type       (string)
+#   7  domain        (string)
+#
+# TensorProto:
+#   1  dims          (repeated int64; we use unpacked-varint form for clarity)
+#   13 external_data (repeated StringStringEntryProto)
+#
+# StringStringEntryProto:
+#   1  key   (string)
+#   2  value (string)
+
+
+WIRE_VARINT = 0
+WIRE_LEN_DELIM = 2
+
+
+def _varint(n: int) -> bytes:
+    """Encode an unsigned integer as a base-128 varint."""
+    if n < 0:
+        raise ValueError("varint cannot be negative")
+    out = bytearray()
+    while True:
+        b = n & 0x7F
+        n >>= 7
+        if n:
+            out.append(b | 0x80)
+        else:
+            out.append(b)
+            return bytes(out)
+
+
+def _tag(field_num: int, wire_type: int) -> bytes:
+    return _varint((field_num << 3) | wire_type)
+
+
+def _string_field(field_num: int, value: str) -> bytes:
+    encoded = value.encode("utf-8")
+    return _tag(field_num, WIRE_LEN_DELIM) + _varint(len(encoded)) + encoded
+
+
+def _varint_field(field_num: int, value: int) -> bytes:
+    return _tag(field_num, WIRE_VARINT) + _varint(value)
+
+
+def _message_field(field_num: int, body: bytes) -> bytes:
+    return _tag(field_num, WIRE_LEN_DELIM) + _varint(len(body)) + body
+
+
+def _string_string_entry(key: str, value: str) -> bytes:
+    return _string_field(1, key) + _string_field(2, value)
+
+
+def _node_proto(op_type: str, domain: str = "") -> bytes:
+    body = b""
+    body += _string_field(4, op_type)  # op_type
+    if domain:
+        body += _string_field(7, domain)  # domain
+    return body
+
+
+def _tensor_proto(dims: list[int], external_location: str | None = None) -> bytes:
+    body = b""
+    # dims — unpacked varint form (one tag per element). The validator
+    # accepts both packed and unpacked.
+    for d in dims:
+        body += _varint_field(1, d)
+    if external_location is not None:
+        entry = _string_string_entry("location", external_location)
+        body += _message_field(13, entry)
+    return body
+
+
+def _graph_proto(nodes: list[bytes], initializers: list[bytes]) -> bytes:
+    body = b""
+    for n in nodes:
+        body += _message_field(1, n)
+    for t in initializers:
+        body += _message_field(5, t)
+    return body
+
+
+def _model_proto(
+    ir_version: int = 7,
+    producer_name: str = "",
+    graph: bytes | None = None,
+) -> bytes:
+    body = _varint_field(1, ir_version)
+    if producer_name:
+        body += _string_field(2, producer_name)
+    if graph is not None:
+        body += _message_field(7, graph)
+    return body
+
+
+def write_onnx(path: Path, body: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(body)
+
+
+# -- safe onnx fixtures ---------------------------------------------------------
+
+
+def gen_onnx_clean_minimal() -> None:
+    """Minimal valid ONNX: 1 Add node from the standard ai.onnx domain."""
+    graph = _graph_proto(
+        nodes=[_node_proto(op_type="Add", domain="")],
+        initializers=[],
+    )
+    body = _model_proto(ir_version=7, producer_name="", graph=graph)
+    write_onnx(ONNX_OUT / "safe" / "clean_minimal.onnx", body)
+
+
+def gen_onnx_with_producer() -> None:
+    """Same as clean_minimal but with producer_name set — exercises the
+    producer-present branch."""
+    graph = _graph_proto(
+        nodes=[_node_proto(op_type="Add", domain="ai.onnx")],
+        initializers=[],
+    )
+    body = _model_proto(ir_version=7, producer_name="oxvault-test", graph=graph)
+    write_onnx(ONNX_OUT / "safe" / "with_producer.onnx", body)
+
+
+# -- malicious onnx fixtures ----------------------------------------------------
+
+
+def gen_onnx_empty() -> None:
+    """Zero-byte file. Validator must emit malformed-protobuf HIGH."""
+    write_onnx(ONNX_OUT / "malicious" / "empty.onnx", b"")
+
+
+def gen_onnx_truncated() -> None:
+    """A valid model whose final bytes have been chopped mid-message.
+
+    We emit a model whose graph length-prefix declares more bytes than
+    actually remain in the buffer. The validator must surface
+    aibom-onnx-malformed-protobuf.
+    """
+    graph = _graph_proto(
+        nodes=[_node_proto(op_type="Add", domain="")],
+        initializers=[],
+    )
+    # Build a model with a graph length-prefix that is one byte larger than
+    # the actual graph body — guaranteed parse failure.
+    body = _varint_field(1, 7)  # ir_version
+    body += _string_field(2, "oxvault-test")
+    body += _tag(7, WIRE_LEN_DELIM)
+    body += _varint(len(graph) + 4)  # over-declare length by 4 bytes
+    body += graph  # actual body is shorter than declared
+    write_onnx(ONNX_OUT / "malicious" / "truncated.onnx", body)
+
+
+def gen_onnx_garbage() -> None:
+    """Random non-protobuf bytes."""
+    body = b"this is plainly not a protobuf encoding!\xff\xff\xff\xff"
+    write_onnx(ONNX_OUT / "malicious" / "garbage.onnx", body)
+
+
+def gen_onnx_custom_domain() -> None:
+    """Node uses a non-standard but plausible-looking domain.
+
+    Validator emits aibom-onnx-custom-operator at WARNING.
+    """
+    graph = _graph_proto(
+        nodes=[_node_proto(op_type="MyCustomOp", domain="com.attacker.malicious")],
+        initializers=[],
+    )
+    body = _model_proto(ir_version=7, producer_name="evil", graph=graph)
+    write_onnx(ONNX_OUT / "malicious" / "custom_domain.onnx", body)
+
+
+def gen_onnx_external_data_traversal() -> None:
+    """Initializer's external_data location escapes the model directory."""
+    initializer = _tensor_proto(
+        dims=[16, 16],
+        external_location="../../../etc/passwd",
+    )
+    graph = _graph_proto(
+        nodes=[_node_proto(op_type="Add", domain="")],
+        initializers=[initializer],
+    )
+    body = _model_proto(ir_version=7, producer_name="evil", graph=graph)
+    write_onnx(ONNX_OUT / "malicious" / "external_data_traversal.onnx", body)
+
+
+def gen_onnx_external_data_url() -> None:
+    """Initializer's external_data location is a remote URL."""
+    initializer = _tensor_proto(
+        dims=[16, 16],
+        external_location="http://evil.example.com/payload",
+    )
+    graph = _graph_proto(
+        nodes=[_node_proto(op_type="Add", domain="")],
+        initializers=[initializer],
+    )
+    body = _model_proto(ir_version=7, producer_name="evil", graph=graph)
+    write_onnx(ONNX_OUT / "malicious" / "external_data_url.onnx", body)
+
+
+def gen_onnx_oversized_tensor() -> None:
+    """Initializer dims claim 10M x 10M = 100 trillion elements, way over cap."""
+    initializer = _tensor_proto(
+        dims=[10_000_000, 10_000_000],
+        external_location=None,
+    )
+    graph = _graph_proto(
+        nodes=[_node_proto(op_type="Add", domain="")],
+        initializers=[initializer],
+    )
+    body = _model_proto(ir_version=7, producer_name="evil", graph=graph)
+    write_onnx(ONNX_OUT / "malicious" / "oversized_tensor.onnx", body)
+
+
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     gen_clean()
@@ -414,6 +652,16 @@ def main() -> None:
     gen_pickle_zip_bomb_nested()
     gen_pickle_many_inner_pkls()
     gen_pickle_oversized_file()
+    ONNX_OUT.mkdir(parents=True, exist_ok=True)
+    gen_onnx_clean_minimal()
+    gen_onnx_with_producer()
+    gen_onnx_empty()
+    gen_onnx_truncated()
+    gen_onnx_garbage()
+    gen_onnx_custom_domain()
+    gen_onnx_external_data_traversal()
+    gen_onnx_external_data_url()
+    gen_onnx_oversized_tensor()
 
     # Print a concise manifest so CI logs document what was produced.
     for p in sorted(OUT.rglob("*.safetensors")):
@@ -423,6 +671,9 @@ def main() -> None:
         if p.is_file():
             rel = p.relative_to(ROOT)
             print(f"  {rel} ({p.stat().st_size} bytes)")
+    for p in sorted(ONNX_OUT.rglob("*.onnx")):
+        rel = p.relative_to(ROOT)
+        print(f"  {rel} ({p.stat().st_size} bytes)")
 
 
 if __name__ == "__main__":
