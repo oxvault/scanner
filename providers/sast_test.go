@@ -71,7 +71,7 @@ func TestDetectLanguage(t *testing.T) {
 		{"Makefile", LangUnknown},
 		{"data.json", LangUnknown},
 		{"script.sh", LangUnknown},
-		{"FILE.PY", LangPython},  // case insensitive
+		{"FILE.PY", LangPython}, // case insensitive
 		{"APP.JS", LangJavaScript},
 		{"MAIN.GO", LangGo},
 	}

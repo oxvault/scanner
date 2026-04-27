@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -503,6 +504,184 @@ func TestResolve_DefaultRoutesToLocal(t *testing.T) {
 	_, err := r.Resolve("some/path/without/leading/dot")
 	if err == nil {
 		t.Error("expected error for non-existent local path")
+	}
+}
+
+// ── Resolve — model artifacts (AIBOM) ────────────────────────────────────────
+
+func TestResolve_LocalFile_PickleArtifact(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "weights.pkl")
+	if err := os.WriteFile(filePath, []byte{0x80, 0x04}, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	r := newResolver(t)
+	pkg, err := r.Resolve(filePath)
+	if err != nil {
+		t.Fatalf("Resolve(%q) error: %v", filePath, err)
+	}
+	if pkg.Kind != KindModelArtifact {
+		t.Errorf("expected Kind=KindModelArtifact, got %q", pkg.Kind)
+	}
+	if pkg.Name != "weights.pkl" {
+		t.Errorf("expected Name='weights.pkl', got %q", pkg.Name)
+	}
+	if pkg.Path != dir {
+		t.Errorf("expected Path=%q (parent dir), got %q", dir, pkg.Path)
+	}
+	if len(pkg.Args) == 0 || pkg.Args[0] != filePath {
+		t.Errorf("expected Args[0]=%q, got %v", filePath, pkg.Args)
+	}
+}
+
+func TestResolve_LocalFile_SafetensorsArtifact(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "model.safetensors")
+	if err := os.WriteFile(filePath, []byte(`{"a":1}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	r := newResolver(t)
+	pkg, err := r.Resolve(filePath)
+	if err != nil {
+		t.Fatalf("Resolve(%q) error: %v", filePath, err)
+	}
+	if pkg.Kind != KindModelArtifact {
+		t.Errorf("expected Kind=KindModelArtifact, got %q", pkg.Kind)
+	}
+}
+
+func TestResolve_LocalFile_ONNXArtifact(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "graph.onnx")
+	if err := os.WriteFile(filePath, []byte{0x08, 0x01}, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	r := newResolver(t)
+	pkg, err := r.Resolve(filePath)
+	if err != nil {
+		t.Fatalf("Resolve(%q) error: %v", filePath, err)
+	}
+	if pkg.Kind != KindModelArtifact {
+		t.Errorf("expected Kind=KindModelArtifact, got %q", pkg.Kind)
+	}
+}
+
+func TestResolve_LocalFile_NonModelKeepsMCPServerKind(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "server.py")
+	if err := os.WriteFile(filePath, []byte("# server"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	r := newResolver(t)
+	pkg, err := r.Resolve(filePath)
+	if err != nil {
+		t.Fatalf("Resolve(%q) error: %v", filePath, err)
+	}
+	if pkg.Kind != KindMCPServer {
+		t.Errorf("expected Kind=KindMCPServer for .py file, got %q", pkg.Kind)
+	}
+}
+
+func TestResolve_LocalDirectory_ModelDirectory(t *testing.T) {
+	dir := t.TempDir()
+	// A directory that contains model artifacts but no MCP-server markers.
+	if err := os.WriteFile(filepath.Join(dir, "weights.safetensors"), []byte(`{"a":1}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	r := newResolver(t)
+	pkg, err := r.Resolve(dir)
+	if err != nil {
+		t.Fatalf("Resolve(%q) error: %v", dir, err)
+	}
+	if pkg.Kind != KindModelDirectory {
+		t.Errorf("expected Kind=KindModelDirectory, got %q", pkg.Kind)
+	}
+	if pkg.Name != filepath.Base(dir) {
+		t.Errorf("expected Name=%q, got %q", filepath.Base(dir), pkg.Name)
+	}
+}
+
+func TestResolve_LocalDirectory_MCPServerWithBundledModelStaysServer(t *testing.T) {
+	// MCP servers commonly bundle sample model weights inside the repo.
+	// The presence of an MCP project marker (package.json / pyproject.toml /
+	// go.mod) must keep the package classified as KindMCPServer.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"my-mcp"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "weights.safetensors"), []byte(`{"a":1}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	r := newResolver(t)
+	pkg, err := r.Resolve(dir)
+	if err != nil {
+		t.Fatalf("Resolve(%q) error: %v", dir, err)
+	}
+	if pkg.Kind != KindMCPServer {
+		t.Errorf("expected Kind=KindMCPServer when MCP markers are present, got %q", pkg.Kind)
+	}
+}
+
+func TestResolve_LocalDirectory_PlainProjectDefaultsToMCPServer(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module test"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	r := newResolver(t)
+	pkg, err := r.Resolve(dir)
+	if err != nil {
+		t.Fatalf("Resolve error: %v", err)
+	}
+	if pkg.Kind != KindMCPServer {
+		t.Errorf("expected Kind=KindMCPServer for plain Go project, got %q", pkg.Kind)
+	}
+}
+
+func TestResolve_HuggingFaceTarget_NotYetImplemented(t *testing.T) {
+	r := newResolver(t)
+	_, err := r.Resolve("hf:meta-llama/Llama-3-8B")
+	if err == nil {
+		t.Fatal("expected error for hf: target")
+	}
+	if !strings.Contains(err.Error(), "not yet implemented") {
+		t.Errorf("expected 'not yet implemented' error, got: %v", err)
+	}
+}
+
+// ── isModelArtifactFile ──────────────────────────────────────────────────────
+
+func TestIsModelArtifactFile(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{"weights.pkl", true},
+		{"weights.pickle", true},
+		{"model.pt", true},
+		{"model.pth", true},
+		{"pytorch_model.bin", true},
+		{"checkpoint.ckpt", true},
+		{"graph.onnx", true},
+		{"weights.safetensors", true},
+		{"WEIGHTS.PKL", true}, // case-insensitive
+		{"server.py", false},
+		{"package.json", false},
+		{"README.md", false},
+		{"main.go", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			if got := isModelArtifactFile(tt.path); got != tt.want {
+				t.Errorf("isModelArtifactFile(%q) = %v, want %v", tt.path, got, tt.want)
+			}
+		})
 	}
 }
 

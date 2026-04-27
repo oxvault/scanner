@@ -22,15 +22,15 @@ func (m *MockResolver) Resolve(target string) (*providers.ResolvedPackage, error
 
 // MockMCPClient is a configurable mock for providers.MCPClient.
 type MockMCPClient struct {
-	ConnectResult  *providers.MCPSession
-	ConnectErr     error
+	ConnectResult   *providers.MCPSession
+	ConnectErr      error
 	ListToolsResult []providers.MCPTool
-	ListToolsErr   error
-	CloseErr       error
+	ListToolsErr    error
+	CloseErr        error
 
-	ConnectCount    atomic.Int32
-	ListToolsCount  atomic.Int32
-	CloseCount      atomic.Int32
+	ConnectCount   atomic.Int32
+	ListToolsCount atomic.Int32
+	CloseCount     atomic.Int32
 }
 
 func (m *MockMCPClient) Connect(cmd string, args []string) (*providers.MCPSession, error) {
@@ -191,11 +191,11 @@ func (m *MockSuppressor) IsInlineSuppressed(_ providers.Finding) bool {
 
 // MockPinStore is a configurable mock for providers.PinStore.
 type MockPinStore struct {
-	PinErr       error
-	CheckResult  []providers.PinDiff
-	CheckErr     error
-	LoadResult   map[string]string
-	LoadErr      error
+	PinErr      error
+	CheckResult []providers.PinDiff
+	CheckErr    error
+	LoadResult  map[string]string
+	LoadErr     error
 
 	PinCount   atomic.Int32
 	CheckCount atomic.Int32
@@ -215,4 +215,133 @@ func (m *MockPinStore) Check(tools []providers.MCPTool) ([]providers.PinDiff, er
 func (m *MockPinStore) Load() (map[string]string, error) {
 	m.LoadCount.Add(1)
 	return m.LoadResult, m.LoadErr
+}
+
+// MockPickleAnalyzer is a configurable mock for providers.PickleAnalyzer.
+type MockPickleAnalyzer struct {
+	AnalyzeFileResult      []providers.Finding
+	AnalyzeDirectoryResult []providers.Finding
+
+	AnalyzeFileCount      atomic.Int32
+	AnalyzeDirectoryCount atomic.Int32
+	// LastFile and LastDir capture the most recent invocation for assertions.
+	LastFile string
+	LastDir  string
+}
+
+func (m *MockPickleAnalyzer) AnalyzeFile(path string) []providers.Finding {
+	m.AnalyzeFileCount.Add(1)
+	m.LastFile = path
+	return m.AnalyzeFileResult
+}
+
+func (m *MockPickleAnalyzer) AnalyzeDirectory(dir string) []providers.Finding {
+	m.AnalyzeDirectoryCount.Add(1)
+	m.LastDir = dir
+	return m.AnalyzeDirectoryResult
+}
+
+// MockONNXValidator is a configurable mock for providers.ONNXValidator.
+type MockONNXValidator struct {
+	ValidateFileResult      []providers.Finding
+	ValidateDirectoryResult []providers.Finding
+
+	ValidateFileCount      atomic.Int32
+	ValidateDirectoryCount atomic.Int32
+	LastFile               string
+	LastDir                string
+}
+
+func (m *MockONNXValidator) ValidateFile(path string) []providers.Finding {
+	m.ValidateFileCount.Add(1)
+	m.LastFile = path
+	return m.ValidateFileResult
+}
+
+func (m *MockONNXValidator) ValidateDirectory(dir string) []providers.Finding {
+	m.ValidateDirectoryCount.Add(1)
+	m.LastDir = dir
+	return m.ValidateDirectoryResult
+}
+
+// MockSafetensorsValidator is a configurable mock for providers.SafetensorsValidator.
+type MockSafetensorsValidator struct {
+	ValidateFileResult      []providers.Finding
+	ValidateDirectoryResult []providers.Finding
+
+	ValidateFileCount      atomic.Int32
+	ValidateDirectoryCount atomic.Int32
+	LastFile               string
+	LastDir                string
+}
+
+func (m *MockSafetensorsValidator) ValidateFile(path string) []providers.Finding {
+	m.ValidateFileCount.Add(1)
+	m.LastFile = path
+	return m.ValidateFileResult
+}
+
+func (m *MockSafetensorsValidator) ValidateDirectory(dir string) []providers.Finding {
+	m.ValidateDirectoryCount.Add(1)
+	m.LastDir = dir
+	return m.ValidateDirectoryResult
+}
+
+// MockModelCardChecker is a configurable mock for providers.ModelCardChecker.
+type MockModelCardChecker struct {
+	CheckFileResult      []providers.Finding
+	CheckDirectoryResult []providers.Finding
+
+	CheckFileCount      atomic.Int32
+	CheckDirectoryCount atomic.Int32
+	LastFile            string
+	LastDir             string
+}
+
+func (m *MockModelCardChecker) CheckFile(path string) []providers.Finding {
+	m.CheckFileCount.Add(1)
+	m.LastFile = path
+	return m.CheckFileResult
+}
+
+func (m *MockModelCardChecker) CheckDirectory(dir string) []providers.Finding {
+	m.CheckDirectoryCount.Add(1)
+	m.LastDir = dir
+	return m.CheckDirectoryResult
+}
+
+// MockSignatureVerifier is a configurable mock for providers.SignatureVerifier.
+type MockSignatureVerifier struct {
+	VerifyArtifactResult  []providers.Finding
+	VerifyDirectoryResult []providers.Finding
+
+	VerifyArtifactCount  atomic.Int32
+	VerifyDirectoryCount atomic.Int32
+	LastFile             string
+	LastDir              string
+}
+
+func (m *MockSignatureVerifier) VerifyArtifact(path string) []providers.Finding {
+	m.VerifyArtifactCount.Add(1)
+	m.LastFile = path
+	return m.VerifyArtifactResult
+}
+
+func (m *MockSignatureVerifier) VerifyDirectory(dir string) []providers.Finding {
+	m.VerifyDirectoryCount.Add(1)
+	m.LastDir = dir
+	return m.VerifyDirectoryResult
+}
+
+// MockAIBOMComposer is a configurable mock for providers.AIBOMComposer.
+type MockAIBOMComposer struct {
+	ScanResult []providers.Finding
+	ScanCount  atomic.Int32
+	LastPath   string
+}
+
+func (m *MockAIBOMComposer) Scan(path string) []providers.Finding {
+	m.ScanCount.Add(1)
+	m.LastPath = path
+	return m.ScanResult
 }

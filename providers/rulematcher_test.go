@@ -68,9 +68,9 @@ func TestScanDescription_CleanDescription(t *testing.T) {
 
 func TestScanDescription_ToolPoisoningTags(t *testing.T) {
 	tests := []struct {
-		name    string
-		input   string
-		rule    string
+		name  string
+		input string
+		rule  string
 	}{
 		{
 			name:  "IMPORTANT tag",
@@ -700,9 +700,9 @@ func TestScanResponse_ShortGHPNotMatched(t *testing.T) {
 
 func TestClassifyTool_Tier1Critical(t *testing.T) {
 	tests := []struct {
-		name     string
-		desc     string
-		src      string
+		name string
+		desc string
+		src  string
 	}{
 		{"exec in desc", "executes commands for you", ""},
 		{"eval in src", "", "eval(user_input)"},

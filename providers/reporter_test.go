@@ -1153,3 +1153,81 @@ func TestReport_SARIF_RelativePathUnchanged(t *testing.T) {
 		t.Errorf("expected relative path unchanged, got %q", uri)
 	}
 }
+
+// ── terminal escape sanitisation ────────────────────────────────────────────
+
+func TestSanitizeForTerminal_StripsControlChars(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "empty",
+			in:   "",
+			want: "",
+		},
+		{
+			name: "plain text untouched",
+			in:   "hello world",
+			want: "hello world",
+		},
+		{
+			name: "tab and newline preserved",
+			in:   "line1\nline2\twith tab",
+			want: "line1\nline2\twith tab",
+		},
+		{
+			name: "ANSI CSI escape stripped",
+			in:   "before\x1b[31mRED\x1b[0mafter",
+			want: "before[31mRED[0mafter",
+		},
+		{
+			name: "OSC sequence stripped",
+			in:   "\x1b]0;evil-title\x07ok",
+			want: "]0;evil-titleok",
+		},
+		{
+			name: "BEL and DEL stripped",
+			in:   "ring\x07the\x7Fbell",
+			want: "ringthebell",
+		},
+		{
+			name: "C1 control bytes stripped",
+			in:   "x\x9by\x9dz",
+			want: "xyz",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sanitizeForTerminal(tt.in)
+			if got != tt.want {
+				t.Errorf("sanitizeForTerminal(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestReport_Terminal_SanitisesAttackerControlledMessage verifies that a
+// finding whose Message contains an ANSI escape sequence does NOT leak that
+// sequence to the terminal. This is the regression test for the
+// terminal-escape-injection finding from the security review.
+func TestReport_Terminal_SanitisesAttackerControlledMessage(t *testing.T) {
+	r := newReporter(t)
+	findings := []Finding{
+		{
+			Rule:     "aibom-pickle-os-system",
+			Severity: SeverityCritical,
+			Message:  "evil\x1b[2J\x1b[H — cleared your screen",
+			File:     "weights\x1b[31m.pkl",
+		},
+	}
+	out, err := r.Report(findings, FormatTerminal)
+	if err != nil {
+		t.Fatalf("Report() error: %v", err)
+	}
+	if strings.Contains(string(out), "\x1b") {
+		t.Errorf("terminal output must not contain raw ESC bytes; got: %q", out)
+	}
+}

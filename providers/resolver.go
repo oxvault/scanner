@@ -22,6 +22,8 @@ func (r *resolver) Resolve(target string) (*ResolvedPackage, error) {
 	r.logger.Info("resolving target", "target", target)
 
 	switch {
+	case strings.HasPrefix(target, "hf:"):
+		return r.resolveHuggingFace(target)
 	case isLocalPath(target):
 		return r.resolveLocal(target)
 	case strings.HasPrefix(target, "github:"):
@@ -31,6 +33,12 @@ func (r *resolver) Resolve(target string) (*ResolvedPackage, error) {
 	default:
 		return r.resolveLocal(target)
 	}
+}
+
+// resolveHuggingFace is a Day-1 stub. Pulling models from HuggingFace lands
+// in a later milestone of the v0.4 AIBOM module.
+func (r *resolver) resolveHuggingFace(target string) (*ResolvedPackage, error) {
+	return nil, fmt.Errorf("hf: targets not yet implemented (target=%q)", target)
 }
 
 func (r *resolver) resolveLocal(path string) (*ResolvedPackage, error) {
@@ -46,15 +54,36 @@ func (r *resolver) resolveLocal(path string) (*ResolvedPackage, error) {
 
 	pkg := &ResolvedPackage{
 		Path: absPath,
+		Kind: KindMCPServer,
 	}
 
 	if info.IsDir() {
+		if isModelDirectory(absPath) {
+			pkg.Kind = KindModelDirectory
+			pkg.Name = filepath.Base(absPath)
+			r.logger.Info("resolved local model directory", "path", pkg.Path)
+			return pkg, nil
+		}
 		pkg.Language = detectProjectLanguage(absPath)
 		cmd, args := detectServerCommand(absPath, pkg.Language)
 		pkg.Command = cmd
 		pkg.Args = args
 		pkg.Name = filepath.Base(absPath)
 	} else {
+		if isModelArtifactFile(absPath) {
+			pkg.Kind = KindModelArtifact
+			pkg.Name = filepath.Base(absPath)
+			pkg.Path = filepath.Dir(absPath)
+			r.logger.Info("resolved local model artifact",
+				"path", pkg.Path,
+				"name", pkg.Name,
+			)
+			// Re-attach the file path to Args so AIBOM consumers know which
+			// artifact to scan. The Path field intentionally points at the
+			// parent directory to mirror MCP-server behaviour.
+			pkg.Args = []string{absPath}
+			return pkg, nil
+		}
 		pkg.Language = detectLanguage(absPath)
 		pkg.Command = languageRuntime(pkg.Language)
 		pkg.Args = []string{absPath}
@@ -211,4 +240,54 @@ func languageRuntime(lang Language) string {
 	default:
 		return ""
 	}
+}
+
+// modelArtifactExtensions lists file extensions that identify model artifacts
+// recognised by the AIBOM module.
+var modelArtifactExtensions = map[string]struct{}{
+	".pkl":         {},
+	".pickle":      {},
+	".pt":          {},
+	".pth":         {},
+	".bin":         {},
+	".ckpt":        {},
+	".onnx":        {},
+	".safetensors": {},
+}
+
+// isModelArtifactFile returns true when path's extension matches a known
+// model-artifact format. Used by the resolver to set ResolvedPackage.Kind.
+func isModelArtifactFile(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	_, ok := modelArtifactExtensions[ext]
+	return ok
+}
+
+// isModelDirectory returns true when dir contains at least one model-artifact
+// file (.pkl, .pt, .onnx, .safetensors, ...) AND lacks the MCP project markers
+// that would identify it as a server (package.json, pyproject.toml, etc.).
+//
+// The MCP-marker check is a guard rail: many MCP servers ship sample weights
+// inside their repo, and we must continue to treat those as servers — not
+// flip them into AIBOM mode. Explicit AIBOM scans of those models should
+// target the artifact file directly.
+//
+// Detection is intentionally cheap: a single directory read, no recursion.
+func isModelDirectory(dir string) bool {
+	if detectProjectLanguage(dir) != LangUnknown {
+		return false
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if isModelArtifactFile(entry.Name()) {
+			return true
+		}
+	}
+	return false
 }

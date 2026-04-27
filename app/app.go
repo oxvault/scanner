@@ -211,15 +211,15 @@ func (a *App) Shutdown(_ context.Context) error {
 
 // Getters
 
-func (a *App) GetScanner() engines.ScannerEngine        { return a.scanner }
-func (a *App) GetPinner() engines.PinEngine              { return a.pinner }
-func (a *App) GetMCPClient() providers.MCPClient         { return a.mcpClient }
-func (a *App) GetRuleMatcher() providers.RuleMatcher     { return a.ruleMatcher }
-func (a *App) GetSASTAnalyzer() providers.SASTAnalyzer   { return a.sastAnalyzer }
-func (a *App) GetDepAuditor() providers.DepAuditor       { return a.depAuditor }
-func (a *App) GetHookAnalyzer() providers.HookAnalyzer   { return a.hookAnalyzer }
-func (a *App) GetReporter() providers.Reporter           { return a.reporter }
-func (a *App) GetPinStore() providers.PinStore           { return a.pinStore }
-func (a *App) GetResolver() providers.Resolver           { return a.resolver }
-func (a *App) GetNetProbe() providers.NetProbe           { return a.netProbe }
-func (a *App) GetSuppressor() providers.Suppressor       { return a.suppressor }
+func (a *App) GetScanner() engines.ScannerEngine       { return a.scanner }
+func (a *App) GetPinner() engines.PinEngine            { return a.pinner }
+func (a *App) GetMCPClient() providers.MCPClient       { return a.mcpClient }
+func (a *App) GetRuleMatcher() providers.RuleMatcher   { return a.ruleMatcher }
+func (a *App) GetSASTAnalyzer() providers.SASTAnalyzer { return a.sastAnalyzer }
+func (a *App) GetDepAuditor() providers.DepAuditor     { return a.depAuditor }
+func (a *App) GetHookAnalyzer() providers.HookAnalyzer { return a.hookAnalyzer }
+func (a *App) GetReporter() providers.Reporter         { return a.reporter }
+func (a *App) GetPinStore() providers.PinStore         { return a.pinStore }
+func (a *App) GetResolver() providers.Resolver         { return a.resolver }
+func (a *App) GetNetProbe() providers.NetProbe         { return a.netProbe }
+func (a *App) GetSuppressor() providers.Suppressor     { return a.suppressor }

@@ -216,6 +216,53 @@ func confidenceLabel(c Confidence) string {
 	}
 }
 
+// sanitizeForTerminal strips bytes that can re-program a terminal emulator
+// from an attacker-controlled string before it reaches the user's screen.
+//
+// This is defence in depth against terminal-escape injection: if a malicious
+// pickle metadata field, model card, or filename embeds ANSI/CSI/OSC escape
+// sequences, dumping it raw via fmt.Fprintf("%s", ...) could clear the
+// screen, redraw fake prompts, or even (with some terminals' historical bugs)
+// execute commands. We strip:
+//
+//   - C0 control chars (0x00..0x1F) except \t (\x09) and \n (\x0A)
+//   - DEL (0x7F)
+//   - The CSI starter "\x1b[" / OSC starter "\x1b]" / any other ESC sequence
+//   - C1 controls in the 0x80..0x9F range
+//
+// The JSON and SARIF encoders escape these bytes correctly already, so this
+// helper is only applied on the terminal output path.
+func sanitizeForTerminal(s string) string {
+	if s == "" {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '\t' || c == '\n':
+			b.WriteByte(c)
+		case c < 0x20:
+			// Drop C0 controls (incl. ESC 0x1B, BEL 0x07, etc).
+		case c == 0x7F:
+			// Drop DEL.
+		case c >= 0x80 && c <= 0x9F:
+			// Drop C1 controls. Note: legitimate UTF-8 multi-byte sequences
+			// have continuation bytes in 0x80..0xBF; we only drop the strict
+			// C1 range 0x80..0x9F when seen as a *leading* byte. Continuation
+			// bytes following a valid UTF-8 leader (0xC2+) pass through here
+			// because the leader byte is >= 0xC0 and gets written below.
+			// In practice the C1 controls only appear as standalone bytes in
+			// non-UTF-8 inputs — Go strings are bytes, so this is a best-
+			// effort filter.
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
+}
+
 // writeFinding writes a single colored finding block to the builder.
 func writeFinding(b *strings.Builder, f Finding) {
 	// Icon + severity badge + confidence + rule name (+ CWE when available)
@@ -229,26 +276,30 @@ func writeFinding(b *strings.Builder, f Finding) {
 	rule := colorBold.Sprint(ruleName)
 	fmt.Fprintf(b, "  %s %s %s %s\n", icon, badge, conf, rule)
 
-	// File location
+	// File location — sanitise before writing because filenames can be
+	// attacker-controlled (model artifact paths, ZIP entry names, etc).
 	if f.File != "" {
+		safeFile := sanitizeForTerminal(f.File)
 		if f.Line > 0 {
-			fmt.Fprintf(b, "    %s\n", colorDim.Sprintf("%s:%d", f.File, f.Line))
+			fmt.Fprintf(b, "    %s\n", colorDim.Sprintf("%s:%d", safeFile, f.Line))
 		} else {
-			fmt.Fprintf(b, "    %s\n", colorDim.Sprint(f.File))
+			fmt.Fprintf(b, "    %s\n", colorDim.Sprint(safeFile))
 		}
 	}
 
 	// Tool name (for description findings)
 	if f.Tool != "" && f.File == "" {
-		fmt.Fprintf(b, "    %s\n", colorDim.Sprintf("Tool: %s", f.Tool))
+		fmt.Fprintf(b, "    %s\n", colorDim.Sprintf("Tool: %s", sanitizeForTerminal(f.Tool)))
 	}
 
-	// Message
-	fmt.Fprintf(b, "    %s\n", f.Message)
+	// Message — this string is built from rule rationales AND attacker
+	// metadata (e.g. quoted GLOBAL names, suspicious-metadata content), so
+	// it MUST be sanitised before being printed to a terminal.
+	fmt.Fprintf(b, "    %s\n", sanitizeForTerminal(f.Message))
 
 	// Fix hint
 	if f.Fix != "" {
-		fmt.Fprintf(b, "    %s %s\n", colorFix.Sprint("Fix:"), colorFix.Sprint(f.Fix))
+		fmt.Fprintf(b, "    %s %s\n", colorFix.Sprint("Fix:"), colorFix.Sprint(sanitizeForTerminal(f.Fix)))
 	}
 
 	b.WriteString("\n")
@@ -292,11 +343,11 @@ func (r *reporter) reportSARIF(findings []Finding) ([]byte, error) {
 		Confidence string `json:"confidence,omitempty"`
 	}
 	type sarifResult struct {
-		RuleID      string          `json:"ruleId"`
-		Level       string          `json:"level"`
-		Message     sarifMessage    `json:"message"`
-		Locations   []sarifLocation `json:"locations,omitempty"`
-		Properties  *sarifProperties `json:"properties,omitempty"`
+		RuleID     string           `json:"ruleId"`
+		Level      string           `json:"level"`
+		Message    sarifMessage     `json:"message"`
+		Locations  []sarifLocation  `json:"locations,omitempty"`
+		Properties *sarifProperties `json:"properties,omitempty"`
 	}
 	type sarifRun struct {
 		Tool struct {

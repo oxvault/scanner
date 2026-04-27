@@ -23,9 +23,9 @@ type Suppressor interface {
 
 // ignoreRule is a parsed line from .oxvaultignore.
 type ignoreRule struct {
-	kind     ignoreKind
-	glob     string // for kindGlob and kindFileRule
-	rule     string // for kindRule and kindFileRule
+	kind ignoreKind
+	glob string // for kindGlob and kindFileRule
+	rule string // for kindRule and kindFileRule
 }
 
 type ignoreKind int

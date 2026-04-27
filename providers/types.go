@@ -53,6 +53,42 @@ const (
 	FormatJSON     OutputFormat = "json"
 )
 
+// PackageKind classifies what kind of artifact a ResolvedPackage represents.
+//
+// The default zero value (empty string) is treated as KindMCPServer to preserve
+// backwards-compatibility with existing call sites that predate the AIBOM module.
+type PackageKind string
+
+const (
+	// KindMCPServer is the historical default — an MCP server (npm/PyPI/Go/local).
+	KindMCPServer PackageKind = "mcp-server"
+	// KindModelArtifact is a single model artifact file (.pkl, .pt, .onnx, .safetensors, ...).
+	KindModelArtifact PackageKind = "model-artifact"
+	// KindModelDirectory is a directory containing model files, weights, and metadata.
+	KindModelDirectory PackageKind = "model-directory"
+	// KindRAGCorpus is a directory of documents used as a retrieval corpus for an LLM.
+	KindRAGCorpus PackageKind = "rag-corpus"
+)
+
+// ArtifactFormat identifies the on-disk format of a model artifact file.
+// Used by AIBOM sub-providers to dispatch the correct analyzer/validator.
+type ArtifactFormat string
+
+const (
+	// FormatPickle is a Python pickle file (.pkl, .pt, .pth, .bin) — unsafe by default.
+	FormatPickle ArtifactFormat = "pickle"
+	// FormatONNX is the Open Neural Network Exchange protobuf format (.onnx).
+	FormatONNX ArtifactFormat = "onnx"
+	// FormatSafetensors is HuggingFace's safe tensor serialization (.safetensors).
+	FormatSafetensors ArtifactFormat = "safetensors"
+	// FormatModelCard is a model card document (README.md, MODEL_CARD.md, ...).
+	FormatModelCard ArtifactFormat = "model-card"
+	// FormatSignature is a sigstore/cosign signature bundle (.sigstore, .sig, .pem).
+	FormatSignature ArtifactFormat = "signature"
+	// FormatUnknown is the default for files the AIBOM module does not recognize.
+	FormatUnknown ArtifactFormat = "unknown"
+)
+
 // Finding represents a single security finding
 type Finding struct {
 	Rule            string     `json:"rule"`
@@ -111,6 +147,9 @@ type ResolvedPackage struct {
 	Language Language // Detected primary language
 	Name     string   // Package name
 	Version  string   // Package version
+	// Kind classifies the package. The zero value is treated as KindMCPServer
+	// for backwards-compatibility with pre-AIBOM call sites.
+	Kind PackageKind
 }
 
 // PinDiff represents a change detected in a tool's description
