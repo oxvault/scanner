@@ -1,7 +1,6 @@
 package providers
 
 import (
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -195,7 +194,12 @@ func (s *onnxScan) emit(f Finding) {
 
 // validateOnnxFile is the shared entry point for both ValidateFile and
 // ValidateDirectory. It performs all checks in a single pass.
-func validateOnnxFile(path string) []Finding {
+//
+// The named return is load-bearing: a deferred recover() below appends a
+// finding to scan.findings on panic. Without the named return, the explicit
+// `return scan.findings` would have already evaluated by the time the recover
+// runs, causing the panic-derived finding to be silently dropped.
+func validateOnnxFile(path string) (findings []Finding) {
 	f, err := os.Open(path) //nolint:gosec // path comes from filesystem walks scoped to the scan target.
 	if err != nil {
 		return nil
@@ -272,6 +276,13 @@ func validateOnnxFile(path string) []Finding {
 	// Defensive: a malformed wire encoding must NEVER take down the scanner.
 	// Wire walkers are bounds-checked, but a recover keeps us safe against
 	// any unforeseen edge case (e.g. a future stdlib bug).
+	//
+	// On panic we append a finding to scan.findings AND copy it through to
+	// the named return so callers actually see it. Without the second step
+	// the panic-derived finding would be silently dropped — the explicit
+	// `return scan.findings` below has already been evaluated by the time
+	// this defer runs, so the named return would otherwise be whatever the
+	// last explicit return wrote.
 	defer func() {
 		if r := recover(); r != nil {
 			scan.emit(Finding{
@@ -281,8 +292,15 @@ func validateOnnxFile(path string) []Finding {
 				Message:    fmt.Sprintf("panic during onnx walk: %v", r),
 				CWE:        "CWE-1284",
 			})
+			findings = scan.findings
 		}
 	}()
+
+	// Test-only seam: when set, panic to exercise the deferred recover()
+	// path above. nil in production builds.
+	if onnxPanicHookForTest != nil {
+		onnxPanicHookForTest()
+	}
 
 	if err := walkModelProto(scan, data); err != nil {
 		scan.emit(Finding{
@@ -292,7 +310,8 @@ func validateOnnxFile(path string) []Finding {
 			Message:    "onnx wire format is malformed: " + err.Error(),
 			CWE:        "CWE-1284",
 		})
-		return scan.findings
+		findings = scan.findings
+		return
 	}
 
 	// Producer name absence is informational — not every producer sets it.
@@ -318,7 +337,8 @@ func validateOnnxFile(path string) []Finding {
 		})
 	}
 
-	return scan.findings
+	findings = scan.findings
+	return
 }
 
 // hasViolation returns true when at least one finding has Severity > Info.
@@ -530,7 +550,11 @@ func classifyOnnxOperator(scan *onnxScan, opType, domain string) {
 			return
 		}
 	}
-	if !patterns.ONNXStandardDomains[domain] {
+	// ONNX operator domains are conventionally lowercase (e.g. "ai.onnx"),
+	// but a producer could emit "AI.ONNX" and still be a standard ONNX
+	// model. ONNXStandardDomains is keyed by lowercase strings, so we
+	// lowercase the value before the lookup to remain robust.
+	if !patterns.ONNXStandardDomains[lower] {
 		scan.emit(Finding{
 			Rule:       "aibom-onnx-custom-operator",
 			Severity:   SeverityWarning,
@@ -739,8 +763,13 @@ func isUnsafeExternalLocation(loc string) bool {
 	if strings.HasPrefix(loc, "/") {
 		return true
 	}
-	// Absolute Windows path: C:\ or \\server\share or X:/.
-	if len(loc) >= 2 && loc[1] == ':' {
+	// Any colon is suspicious. This catches Windows drive letters
+	// (`C:\path`, `X:/path`) as well as NTFS Alternate Data Streams
+	// (`weights.bin:hidden_payload`) where the colon appears at any
+	// position other than 1. ONNX external_data location values are
+	// supposed to be plain relative POSIX paths — a colon has no
+	// legitimate meaning there.
+	if strings.Contains(loc, ":") {
 		return true
 	}
 	if strings.HasPrefix(loc, "\\\\") {
@@ -764,18 +793,12 @@ func isUnsafeExternalLocation(loc string) bool {
 	return false
 }
 
+// onnxPanicHookForTest is a test-only injection point. When non-nil it is
+// invoked just before the wire walker runs, allowing tests to verify that the
+// deferred recover() in validateOnnxFile correctly surfaces panic-derived
+// findings to callers via the named return. Production builds leave this nil.
+var onnxPanicHookForTest func()
+
 // ── compile-time interface guard ────────────────────────────────────────────
 
 var _ ONNXValidator = (*onnxValidator)(nil)
-
-// ── unused helpers retained for future use ──────────────────────────────────
-
-// readFixed64LE decodes a little-endian uint64 — kept for future fields.
-//
-//nolint:unused // Reserved for future field decoding (e.g. raw_data parsing).
-func readFixed64LE(buf []byte, pos int) (uint64, int, error) {
-	if pos+8 > len(buf) {
-		return 0, pos, io.ErrUnexpectedEOF
-	}
-	return binary.LittleEndian.Uint64(buf[pos : pos+8]), pos + 8, nil
-}

@@ -128,7 +128,7 @@ func TestONNXValidator_Fixtures(t *testing.T) {
 		wantSeverity providers.Severity
 	}{
 		{
-			name:         "clean minimal emits clean INFO (and missing-producer INFO)",
+			name:         "clean minimal emits missing-producer INFO",
 			fixture:      "safe/clean_minimal.onnx",
 			wantRule:     "aibom-onnx-missing-producer",
 			wantSeverity: providers.SeverityInfo,
@@ -657,5 +657,96 @@ func TestONNXTestHelpers_NotBigEndian(t *testing.T) {
 	binary.LittleEndian.PutUint64(fb[:], 1)
 	if fb[0] != 1 {
 		t.Errorf("LittleEndian PutUint64 unexpected: %x", fb)
+	}
+}
+
+// ── regression tests for review findings ────────────────────────────────────
+
+// TestONNXValidator_PanicDuringWalkSurfacesFinding pins the named-return fix
+// in validateOnnxFile. The deferred recover() inside that function must
+// surface a malformed-protobuf finding to the caller — historically the
+// explicit `return scan.findings` evaluated before the deferred recover ran,
+// causing the panic-derived finding to be silently dropped. With the named
+// return the recover assigns `findings = scan.findings` and the caller now
+// sees the finding.
+func TestONNXValidator_PanicDuringWalkSurfacesFinding(t *testing.T) {
+	dir := t.TempDir()
+	graph := buildGraph([][]byte{buildNode("Add", "")}, nil)
+	body := buildModel(7, "oxvault-test", graph)
+	path := writeOnnxFile(t, dir, "model.onnx", body)
+
+	providers.SetONNXPanicHookForTest(func() {
+		panic("synthetic panic for regression coverage")
+	})
+	t.Cleanup(func() { providers.SetONNXPanicHookForTest(nil) })
+
+	v := providers.NewONNXValidator()
+	findings := v.ValidateFile(path)
+
+	if !findRuleAndSeverity(findings, "aibom-onnx-malformed-protobuf", providers.SeverityHigh) {
+		t.Fatalf("expected malformed-protobuf HIGH from recover path, got: %+v", findings)
+	}
+	// Defence in depth — the panic message must be threaded through.
+	saw := false
+	for _, f := range findings {
+		if f.Rule == "aibom-onnx-malformed-protobuf" &&
+			bytes.Contains([]byte(f.Message), []byte("panic during onnx walk")) {
+			saw = true
+		}
+	}
+	if !saw {
+		t.Errorf("expected the panic-derived finding to mention the panic, got: %+v", findings)
+	}
+}
+
+// TestONNXValidator_NTFSAlternateDataStreamExternalData pins the colon-anywhere
+// rule in isUnsafeExternalLocation. NTFS Alternate Data Streams (e.g.
+// "weights.bin:hidden") use a colon at a position other than 1, which the
+// previous `loc[1] == ':'` check missed. external_data location values have
+// no legitimate use for colons; any occurrence must be flagged.
+func TestONNXValidator_NTFSAlternateDataStreamExternalData(t *testing.T) {
+	dir := t.TempDir()
+	tensor := buildTensor([]uint64{4, 4}, "weights.bin:hidden_payload")
+	graph := buildGraph(
+		[][]byte{buildNode("Add", "")},
+		[][]byte{tensor},
+	)
+	body := buildModel(7, "oxvault-test", graph)
+	path := writeOnnxFile(t, dir, "model.onnx", body)
+
+	v := providers.NewONNXValidator()
+	findings := v.ValidateFile(path)
+
+	if !findRuleAndSeverity(findings, "aibom-onnx-external-data", providers.SeverityWarning) {
+		t.Errorf("expected external-data WARNING for NTFS ADS payload, got: %+v", findings)
+	}
+}
+
+// TestONNXValidator_StandardDomainCaseInsensitive pins the case-insensitive
+// fix in classifyOnnxOperator. ONNXStandardDomains is keyed by lowercase
+// strings, but a producer could still emit the domain in uppercase or mixed
+// case. The validator must lowercase before lookup so it does NOT
+// misclassify "AI.ONNX" as a custom operator.
+func TestONNXValidator_StandardDomainCaseInsensitive(t *testing.T) {
+	cases := []string{"AI.ONNX", "Ai.Onnx", "AI.ONNX.ML"}
+	for _, dom := range cases {
+		t.Run(dom, func(t *testing.T) {
+			dir := t.TempDir()
+			graph := buildGraph(
+				[][]byte{buildNode("Add", dom)},
+				nil,
+			)
+			body := buildModel(7, "oxvault-test", graph)
+			path := writeOnnxFile(t, dir, "model.onnx", body)
+
+			v := providers.NewONNXValidator()
+			findings := v.ValidateFile(path)
+
+			for _, f := range findings {
+				if f.Rule == "aibom-onnx-custom-operator" {
+					t.Errorf("uppercase standard domain %q must not flag custom-operator; got %+v", dom, f)
+				}
+			}
+		})
 	}
 }
