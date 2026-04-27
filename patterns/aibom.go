@@ -4,7 +4,7 @@ package patterns
 //
 // These maps key on the fully-qualified Python name pushed onto the pickle
 // stack via the GLOBAL or STACK_GLOBAL opcode (e.g. "os.system"). They feed
-// the pickle disassembler in providers/aibom/pickle.go — pure data only.
+// the pickle disassembler in providers/pickle.go — pure data only.
 //
 // Tier semantics:
 //
@@ -270,7 +270,7 @@ func IsAllowedMLGlobal(qualified string) bool {
 
 // ── safetensors validator data ──────────────────────────────────────────────
 //
-// The lists below feed providers/aibom/safetensors.go. Pure data only — no
+// The lists below feed providers/safetensors.go. Pure data only — no
 // behaviour. Keeping these in patterns/ honours the project's layering rule:
 // providers/ depends on patterns/, never the reverse.
 
@@ -312,30 +312,6 @@ var SafetensorsShellMetacharacters = []string{
 	"<(",
 }
 
-// SafetensorsPickleMagicBytes are the 2-byte protocol-2/4/5 pickle headers.
-// A safetensors `__metadata__` field should never contain these — they can
-// only get there if someone smuggled a pickle blob into the "safe" container.
-//
-// Both the raw byte form and the JSON unicode-escape form are listed because
-// JSON cannot encode raw 0x80 (it is invalid UTF-8) — a real attacker must
-// use \uXXXX escapes, and the unmarshalled form on the Go side becomes the
-// UTF-8 encoding of the codepoint (0xC2 0x80 ...). All three representations
-// are checked so detection works pre- and post-decode.
-//
-// Stored as strings (not byte slices) so callers can do a single
-// strings.Contains() pass.
-var SafetensorsPickleMagicBytes = []string{
-	"\x80\x02", // pickle protocol 2 — raw bytes
-	"\x80\x03", // pickle protocol 3 — raw bytes
-	"\x80\x04", // pickle protocol 4 — raw bytes
-	"\x80\x05", // pickle protocol 5 — raw bytes
-
-	// UTF-8 encoded form (post-JSON-decode of \u00XX).
-	"\xc2\x80\x02",
-	"\xc2\x80\x03",
-	"\xc2\x80\x04",
-	"\xc2\x80\x05",
-}
 
 // SafetensorsPickleMagicEscapes is the JSON-source form of the pickle magic
 // bytes — what a malicious header looks like ON DISK before JSON decoding.

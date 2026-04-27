@@ -54,11 +54,10 @@ func (m composerMocks) wire() providers.AIBOMComposer {
 	)
 }
 
-// writeAibomFile creates a file at dir/name with the given binary body. It
-// is named to avoid collision with the existing string-content writeFile
-// helper in depaudit_test.go (which lives in the internal `providers`
-// package — these tests are in `providers_test`, but the rename keeps the
-// distinction obvious for future readers).
+// writeAibomFile creates a file at dir/name with the given binary body.
+// Distinct name from depaudit_test.go's string-content writeFile helper for
+// reader clarity (the two live in different test packages and would not
+// actually collide at the symbol level).
 func writeAibomFile(t *testing.T, dir, name string, body []byte) string {
 	t.Helper()
 	path := filepath.Join(dir, name)
