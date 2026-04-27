@@ -229,10 +229,10 @@ type globalRef struct {
 
 func newDisassembler(path string, data []byte) *disassembler {
 	return &disassembler{
-		path:   path,
-		data:   data,
-		stack:  make([]stackEntry, 0, 256),
-		memo:   make(map[uint64]stackEntry, 64),
+		path:    path,
+		data:    data,
+		stack:   make([]stackEntry, 0, 256),
+		memo:    make(map[uint64]stackEntry, 64),
 		globals: make([]globalRef, 0, 16),
 	}
 }
