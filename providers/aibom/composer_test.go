@@ -256,14 +256,12 @@ func TestComposer_Scan_Directory_SkipsExcludedDirs(t *testing.T) {
 // ── functional-options nil-safety ────────────────────────────────────────────
 
 func TestNewComposer_DefaultsAreInstalledForMissingOptions(t *testing.T) {
-	// Construct with no options — the composer must still operate.
+	// Construct with no options — the composer must still operate without
+	// panicking. Real default sub-providers may emit findings; we just
+	// assert the call completes safely.
 	c := aibom.NewComposer()
 
 	dir := t.TempDir()
 	path := writeFile(t, dir, "weights.pkl", []byte{0x80, 0x04})
-	findings := c.Scan(path)
-	// Skeletons return nil — but the test passes if no panic occurs.
-	if findings != nil {
-		t.Errorf("expected nil findings from default skeleton, got %d", len(findings))
-	}
+	_ = c.Scan(path) // must not panic
 }
