@@ -312,7 +312,6 @@ var SafetensorsShellMetacharacters = []string{
 	"<(",
 }
 
-
 // SafetensorsPickleMagicEscapes is the JSON-source form of the pickle magic
 // bytes — what a malicious header looks like ON DISK before JSON decoding.
 // We scan the raw header bytes for these so we catch the attack regardless
@@ -336,3 +335,63 @@ var SafetensorsURLPrefixes = []string{
 	"javascript:",
 	"data:",
 }
+
+// ── ONNX validator data ─────────────────────────────────────────────────────
+//
+// The lists below feed providers/onnx.go. Pure data only — no behaviour.
+// Keeping these in patterns/ honours the project's layering rule:
+// providers/ depends on patterns/, never the reverse.
+
+// ONNXStandardDomains is the set of operator domains officially defined by
+// the ONNX specification. Anything else is an opaque custom operator that an
+// inference runtime would need a vendor-specific kernel to execute — and is
+// the standard channel for smuggling unsafe behaviour into a model graph.
+//
+// Reference: https://github.com/onnx/onnx/blob/main/docs/Versioning.md#operator-set-domains
+var ONNXStandardDomains = map[string]bool{
+	"":                         true, // empty == default ai.onnx domain
+	"ai.onnx":                  true,
+	"ai.onnx.ml":               true,
+	"ai.onnx.training":         true,
+	"ai.onnx.preview.training": true,
+}
+
+// ONNXSuspiciousDomainSubstrings lists substrings whose presence inside an
+// operator domain is a strong hint that the domain references arbitrary code
+// (a URL, a vendor-rooted package path, or a known-bad name). The match is
+// case-insensitive.
+var ONNXSuspiciousDomainSubstrings = []string{
+	"http://",
+	"https://",
+	"ftp://",
+	"file://",
+	"javascript:",
+	"data:",
+	"/", // any forward slash is unusual in legitimate ONNX domains
+	"\\",
+	"contrib.malicious",
+}
+
+// ONNXSuspiciousExternalDataPrefixes flags external_data location values that
+// point outside the model's directory or to remote resources.
+var ONNXSuspiciousExternalDataPrefixes = []string{
+	"http://",
+	"https://",
+	"ftp://",
+	"ftps://",
+	"file://",
+	"javascript:",
+	"data:",
+}
+
+// MaxOnnxTensorElements caps the number of elements an initializer may declare
+// before we flag it as oversized. Default is 256M elements (≈ 1 GiB at 4-byte
+// float32). Real production models with huge embedding tables can exceed this,
+// so the rule fires at WARNING — not HIGH/CRITICAL.
+const MaxOnnxTensorElements uint64 = 256 * 1024 * 1024
+
+// MaxOnnxFileBytes caps the on-disk size of an .onnx file the validator will
+// read. ONNX models can be large (multi-GiB) but anything beyond 4 GiB is
+// vanishingly rare in practice and any pathological producer hitting this cap
+// would be smaller, so we fail closed with a malformed-protobuf finding.
+const MaxOnnxFileBytes int64 = 4 * 1024 * 1024 * 1024
