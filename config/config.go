@@ -24,6 +24,19 @@ type Config struct {
 	SkipEgress     bool
 	ProbeNetwork   bool // Run runtime network probe after static scan
 	ShowSuppressed bool // Print suppressed findings in a separate section
+
+	// Hugging Face resolver (v0.4 AIBOM)
+	HF HFOptions
+}
+
+// HFOptions configure the Hugging Face resolver. All fields are optional —
+// providers.HFConfig.applyDefaults() fills in sensible values.
+type HFOptions struct {
+	Token         string // HF_TOKEN env override; empty = anonymous
+	Revision      string // default: "main"
+	CacheDir      string // default: ~/.cache/oxvault/hf
+	MaxFileBytes  int64  // default: 4 GiB
+	MaxCacheBytes int64  // default: 16 GiB
 }
 
 // DefaultConfig returns a Config with sensible defaults
@@ -32,6 +45,10 @@ func DefaultConfig() *Config {
 		OutputFormat: providers.FormatTerminal,
 		FailOn:       providers.RiskTierCritical.String(),
 		PinDir:       defaultPinDir(),
+		HF: HFOptions{
+			Token:    os.Getenv("HF_TOKEN"),
+			Revision: "main",
+		},
 	}
 }
 
