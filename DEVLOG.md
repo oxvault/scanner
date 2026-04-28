@@ -1,5 +1,32 @@
 # Scanner Development Log
 
+## Day 8 — Hugging Face resolver — 2026-04-28
+
+Branch: `feat/aibom-day8-hf-resolver`
+
+### What shipped
+- `providers/hf_resolver.go` — full HF resolver implementation. `oxvault scan hf:org/model[@revision]` now downloads relevant files to a per-(org, model, rev) cache directory and returns a `ResolvedPackage` with `Kind=KindModelDirectory` so the AIBOM composer can scan it like any other model dir.
+- `parseHFTarget` — handles `hf:org/model` and `hf:org/model@revision`, validates org/model/revision shape, rejects path-traversal (`..`) in revision.
+- `HFConfig` struct with functional options: `WithHFConfig`, `WithHFToken`, `WithHFRevision`, `WithHFCacheDir`, `WithHFMaxFileBytes`, `WithHFMaxCacheBytes`, `WithHFBaseURL`, `WithHFHTTPClient`. Tests inject an `httptest.Server` via `WithHFBaseURL`.
+- HTTP client: 30s timeout, 3 retries with exponential backoff on 5xx, `Retry-After`-aware on 429, clear 401/403/404 errors mentioning `HF_TOKEN`.
+- Filename filtering: only security-relevant files are downloaded (`.pkl`, `.pt`, `.pth`, `.bin`, `.ckpt`, `.onnx`, `.safetensors`, `.md`, `.sigstore`, `.sig`, plus exact basenames `model_signing.json`, `manifest.json`, `config.json`, `readme.md`, `model_card.md`, `model_card.yaml`, `.modelcard.yaml`).
+- Per-file size cap (default 4 GiB) and total-cache size cap (default 16 GiB). Cache hit shortcut via HEAD size check — no re-download when local file size matches remote.
+- Atomic temp+rename writes so a partial download never lands in cache.
+- `config/config.go`: new `HF` section with env-var defaults (`HF_TOKEN`).
+- `cmd/main.go`: `--hf-token`, `--hf-revision`, `--hf-cache-dir`, `--hf-max-file-bytes`, `--hf-max-cache-bytes` flags on `scanCmd`.
+- `app/app.go`: `InitProviders` constructs the resolver via `NewResolverWithOptions(...)` with `HFConfig` flowed from `a.Config.HF`.
+
+### Tests
+- `parseHFTarget` table tests cover all parse paths.
+- `httptest.Server` integration tests: success path, cache hit, 401 (HF_TOKEN hint), 404, 5xx retry-and-succeed. No real HF calls.
+
+### Quality gates
+- `make build` — clean
+- `make test` — all 4 packages pass
+- `make lint` — 0 issues
+
+---
+
 ## Day 7 — Signature verifier — 2026-04-27
 
 Branch: `feat/aibom-day7-signature`

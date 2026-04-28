@@ -4,7 +4,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -644,16 +643,8 @@ func TestResolve_LocalDirectory_PlainProjectDefaultsToMCPServer(t *testing.T) {
 	}
 }
 
-func TestResolve_HuggingFaceTarget_NotYetImplemented(t *testing.T) {
-	r := newResolver(t)
-	_, err := r.Resolve("hf:meta-llama/Llama-3-8B")
-	if err == nil {
-		t.Fatal("expected error for hf: target")
-	}
-	if !strings.Contains(err.Error(), "not yet implemented") {
-		t.Errorf("expected 'not yet implemented' error, got: %v", err)
-	}
-}
+// HF resolver integration tests live in hf_resolver_test.go and use
+// httptest.Server so we never touch the real HuggingFace API.
 
 // ── isModelArtifactFile ──────────────────────────────────────────────────────
 

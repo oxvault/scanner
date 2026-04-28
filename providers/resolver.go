@@ -12,6 +12,7 @@ import (
 
 type resolver struct {
 	logger *slog.Logger
+	hf     HFConfig
 }
 
 func NewResolver(logger *slog.Logger) Resolver {
@@ -35,10 +36,9 @@ func (r *resolver) Resolve(target string) (*ResolvedPackage, error) {
 	}
 }
 
-// resolveHuggingFace is a Day-1 stub. Pulling models from HuggingFace lands
-// in a later milestone of the v0.4 AIBOM module.
+// resolveHuggingFace dispatches to the v0.4 HF download + cache implementation.
 func (r *resolver) resolveHuggingFace(target string) (*ResolvedPackage, error) {
-	return nil, fmt.Errorf("hf: targets not yet implemented (target=%q)", target)
+	return r.resolveHuggingFaceImpl(target)
 }
 
 func (r *resolver) resolveLocal(path string) (*ResolvedPackage, error) {

@@ -146,7 +146,15 @@ func (a *App) Initialize() error {
 // InitProviders creates all provider instances (lazy — skips if already set via options)
 func (a *App) InitProviders() error {
 	if a.resolver == nil {
-		a.resolver = providers.NewResolver(a.Logger)
+		a.resolver = providers.NewResolverWithOptions(a.Logger,
+			providers.WithHFConfig(providers.HFConfig{
+				Token:         a.Config.HF.Token,
+				Revision:      a.Config.HF.Revision,
+				CacheDir:      a.Config.HF.CacheDir,
+				MaxFileBytes:  a.Config.HF.MaxFileBytes,
+				MaxCacheBytes: a.Config.HF.MaxCacheBytes,
+			}),
+		)
 	}
 	if a.mcpClient == nil {
 		a.mcpClient = providers.NewMCPClient(a.Logger)

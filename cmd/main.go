@@ -118,6 +118,13 @@ func newScanCmd() *cobra.Command {
 		noColor        bool
 		configPath     string
 		showSuppressed bool
+
+		// HF (v0.4 AIBOM)
+		hfToken         string
+		hfRevision      string
+		hfCacheDir      string
+		hfMaxFileBytes  int64
+		hfMaxCacheBytes int64
 	)
 
 	cmd := &cobra.Command{
@@ -149,6 +156,23 @@ Config-based scanning:
 			cfg.ProbeNetwork = probeNetwork
 			cfg.NoColor = noColor
 			cfg.ShowSuppressed = showSuppressed
+
+			// HF resolver options (v0.4 AIBOM)
+			if hfToken != "" {
+				cfg.HF.Token = hfToken
+			}
+			if hfRevision != "" {
+				cfg.HF.Revision = hfRevision
+			}
+			if hfCacheDir != "" {
+				cfg.HF.CacheDir = hfCacheDir
+			}
+			if hfMaxFileBytes > 0 {
+				cfg.HF.MaxFileBytes = hfMaxFileBytes
+			}
+			if hfMaxCacheBytes > 0 {
+				cfg.HF.MaxCacheBytes = hfMaxCacheBytes
+			}
 
 			// Apply no-color globally before any output
 			if noColor || cfg.OutputFormat != providers.FormatTerminal {
@@ -191,6 +215,13 @@ Config-based scanning:
 	cmd.Flags().BoolVar(&noColor, "no-color", false, "Disable color output (for CI or piping)")
 	cmd.Flags().StringVar(&configPath, "config", "", "MCP client config file to scan (path or \"auto\")")
 	cmd.Flags().BoolVar(&showSuppressed, "show-suppressed", false, "Print suppressed findings in a separate section")
+
+	// HF resolver flags (v0.4 AIBOM)
+	cmd.Flags().StringVar(&hfToken, "hf-token", "", "Hugging Face API token (env: HF_TOKEN)")
+	cmd.Flags().StringVar(&hfRevision, "hf-revision", "", "Hugging Face revision/branch/SHA (default: main)")
+	cmd.Flags().StringVar(&hfCacheDir, "hf-cache-dir", "", "Hugging Face cache directory (default: ~/.cache/oxvault/hf)")
+	cmd.Flags().Int64Var(&hfMaxFileBytes, "hf-max-file-bytes", 0, "Max bytes per HF file (default: 4 GiB)")
+	cmd.Flags().Int64Var(&hfMaxCacheBytes, "hf-max-cache-bytes", 0, "Max total HF cache bytes (default: 16 GiB)")
 
 	return cmd
 }
