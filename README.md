@@ -4,7 +4,7 @@
 
 # Oxvault Scanner
 
-**Detect vulnerabilities in MCP servers before they run.**
+**Security scanner for the AI supply chain — MCP servers, ML models, RAG corpora.**
 
 [![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go)](https://go.dev)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue)](LICENSE)
@@ -17,22 +17,28 @@
 
 ---
 
-MCP (Model Context Protocol) is the standard for connecting AI agents (Claude, GPT, Copilot, Cursor) to external tools. **Half of MCP servers have security vulnerabilities.** Oxvault catches them before installation.
+Every artifact your AI agent loads is untrusted code or data. **MCP servers** execute code on your machine. **ML model pickles** are arbitrary Python execution by design — `torch.load("model.pt")` is functionally `eval()`. **RAG documents** carry indirect prompt injection through retrieval. Oxvault catches all three before they load.
 
-**141 servers scanned** | **50% had HIGH+ findings** | **135 confirmed CRITICALs** | **12/12 CVEs detected**
+**v0.3 (shipped):** MCP server scanning — 141 servers scanned, 50% had HIGH+ findings, 12/12 CVEs detected, 93% precision.
+
+**v0.4 (shipping):** AIBOM — pickle opcode disassembly (no execution), ONNX protobuf validation, safetensors header checks, OpenSSF Model Signing verification, model card poisoning detection.
+
+**v0.5 (planned):** RAG corpus scanning — same poisoning engine on indexed documents.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/oxvault/scanner/main/scripts/install.sh | sh
-oxvault scan github:user/mcp-server
+oxvault scan github:user/mcp-server      # MCP server
+oxvault scan ./model.pkl                 # ML model artifact (v0.4)
 ```
 
 ---
 
 ### Table of Contents
 
-- [What It Catches](#what-it-catches) - SAST, credentials, tool poisoning, supply chain, SSRF
+- [What It Catches](#what-it-catches) - SAST, credentials, tool poisoning, supply chain, SSRF, model artifacts
 - [Quick Start](#quick-start) - install and scan in seconds
 - [Examples](#examples) - scan output, rug pulls, install hooks, CI/CD, confidence filtering
+- [Model Artifact Scanning (v0.4)](#model-artifact-scanning-v04) - pickle, ONNX, safetensors, signatures
 - [CLI Options](#all-cli-options) - all flags and commands
 - [Real-World Results](#real-world-scan-results) - 141 servers scanned, 50% had HIGH+ findings
 - [Benchmarks](#benchmarks) - CVE detection, false positive rate, competitive comparison
@@ -104,6 +110,23 @@ oxvault scan github:user/mcp-server
 | **Network egress** | Tools that phone home when they shouldn't | CWE-200 |
 | **Runtime probe** | Actual outbound connections during tool execution | CWE-918 |
 
+### Model Artifacts (v0.4 — AIBOM)
+
+| Check | What It Catches | CWE |
+|---|---|---|
+| **Pickle RCE** | `os.system`, `subprocess.Popen`, `eval`, `__import__` referenced via GLOBAL/REDUCE — read at the opcode level, no execution | CWE-502 |
+| **PyTorch ZIP recursion** | Malicious `data.pkl` smuggled inside `.pt` ZIP archives | CWE-502 |
+| **Safetensors header overflow** | Attacker-controlled header length larger than file or 100 MiB cap | CWE-1284 |
+| **Tensor offset overlap / overflow** | Two tensors claiming same byte range, or offsets outside file | CWE-1284 |
+| **ONNX malformed protobuf** | Wire-format errors caught by hand-rolled walker (no codegen) | CWE-1284 |
+| **Custom-domain ONNX operator** | Operators outside `ai.onnx`, `ai.onnx.ml` — vendor extensions or attacker payloads | CWE-829 |
+| **External data path traversal** | ONNX `external_data_location` with `../`, absolute paths, NTFS ADS, or URL schemes | CWE-22 |
+| **Oversized initializer** | Tensor dim product over 256 M elements (OOM during model load) | CWE-400 |
+| **Model card prompt injection** | README.md / model_card.yaml carrying `<IMPORTANT>` tags, BiDi reversal, "ignore previous" instructions | CWE-1039 |
+| **Missing license / source / eval** | Provenance gaps in model card frontmatter and body | — |
+| **Signature mismatch** | OpenSSF Model Signing manifest hash != actual artifact SHA-256 | CWE-353 |
+| **Untrusted signature issuer** | OIDC issuer not in configured trusted-issuer list | CWE-347 |
+
 ## Quick Start
 
 ```bash
@@ -115,6 +138,12 @@ go install github.com/oxvault/scanner/cmd@latest
 
 # Scan a local MCP server
 oxvault scan ./my-mcp-server
+
+# Scan a model artifact (v0.4)
+oxvault scan ./model.pkl
+oxvault scan ./model.safetensors
+oxvault scan ./model.onnx
+oxvault scan ./hf-cache/  # mixed directory of artifacts + cards + signatures
 
 # Scan an npm package
 oxvault scan @company/mcp-server
