@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -34,13 +35,33 @@ func TestParseHFTarget(t *testing.T) {
 		{name: "empty org", target: "hf:/model", wantErr: true},
 		{name: "empty model", target: "hf:org/", wantErr: true},
 		{name: "path traversal in revision", target: "hf:org/model@../../etc", wantErr: true},
+
+		// Cache-traversal hardening — the resolver materialises files under
+		// cacheDir/<org>/<model>/<rev>, so any segment that climbs out of
+		// the cache root must be rejected at parse time.
+		{name: "dotdot org", target: "hf:../foo/model", wantErr: true},
+		{name: "dot org", target: "hf:./foo/model", wantErr: true},
+		{name: "dotdot whole body", target: "hf:../foo", wantErr: true},
+		{name: "dot whole body", target: "hf:./foo", wantErr: true},
+		{name: "leading dot in org", target: "hf:.foo/model", wantErr: true},
+		{name: "leading dot in model", target: "hf:foo/.model", wantErr: true},
+		{name: "trailing dot in org", target: "hf:foo./model", wantErr: true},
+		{name: "control char in org", target: "hf:foo\x00bar/model", wantErr: true},
+		{name: "control char in model", target: "hf:foo/bar\x00baz", wantErr: true},
+		{name: "newline in org", target: "hf:foo\nbar/model", wantErr: true},
+		{name: "space in org", target: "hf:foo bar/model", wantErr: true},
+		{name: "slash in revision rejected", target: "hf:org/model@feat/x", wantErr: true},
+		{name: "backslash in revision rejected", target: "hf:org/model@feat\\x", wantErr: true},
+		{name: "dot revision", target: "hf:org/model@.", wantErr: true},
+		{name: "dotdot revision", target: "hf:org/model@..", wantErr: true},
+		{name: "control char in revision", target: "hf:org/model@v1\x00", wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := parseHFTarget(tt.target, tt.defRev)
 			if tt.wantErr {
 				if err == nil {
-					t.Fatal("expected error")
+					t.Fatalf("expected error, got %+v", got)
 				}
 				return
 			}
@@ -50,6 +71,73 @@ func TestParseHFTarget(t *testing.T) {
 			if got.Org != tt.wantOrg || got.Model != tt.wantModel || got.Revision != tt.wantRev {
 				t.Errorf("got (%q, %q, %q), want (%q, %q, %q)",
 					got.Org, got.Model, got.Revision, tt.wantOrg, tt.wantModel, tt.wantRev)
+			}
+		})
+	}
+}
+
+// ── isSafeRelPath ──────────────────────────────────────────────────────────
+
+func TestIsSafeRelPath(t *testing.T) {
+	tests := []struct {
+		name string
+		rel  string
+		want bool
+	}{
+		{name: "simple file", rel: "config.json", want: true},
+		{name: "nested file", rel: "subdir/config.json", want: true},
+		{name: "dot in name (safe)", rel: "model.safetensors", want: true},
+
+		// All of these must be rejected.
+		{name: "empty", rel: "", want: false},
+		{name: "absolute unix", rel: "/etc/passwd", want: false},
+		{name: "absolute windows", rel: "\\windows\\system32\\sam", want: false},
+		{name: "leading dotdot", rel: "../etc/passwd", want: false},
+		{name: "windows dotdot", rel: "..\\windows\\system32", want: false},
+		{name: "embedded dotdot", rel: "foo/../bar", want: false},
+		{name: "dotdot only", rel: "..", want: false},
+		{name: "dot only", rel: ".", want: false},
+		{name: "trailing dotdot segment", rel: "foo/..", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isSafeRelPath(tt.rel)
+			if got != tt.want {
+				t.Errorf("isSafeRelPath(%q) = %v, want %v", tt.rel, got, tt.want)
+			}
+		})
+	}
+}
+
+// ── HFConfig.LogValue redaction ────────────────────────────────────────────
+
+func TestHFConfigLogValueRedactsToken(t *testing.T) {
+	tests := []struct {
+		name      string
+		token     string
+		wantToken string
+	}{
+		{name: "set", token: "hf_secret_value_12345", wantToken: "<set>"},
+		{name: "unset", token: "", wantToken: "<unset>"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := HFConfig{
+				Token:    tt.token,
+				Revision: "main",
+				CacheDir: "/tmp/cache",
+				BaseURL:  DefaultHFBaseURL,
+			}
+			buf := &strings.Builder{}
+			logger := slog.New(slog.NewTextHandler(buf, nil))
+			logger.Info("test", "hf", cfg)
+
+			out := buf.String()
+			if !strings.Contains(out, tt.wantToken) {
+				t.Errorf("expected log output to contain %q, got: %s", tt.wantToken, out)
+			}
+			if tt.token != "" && strings.Contains(out, tt.token) {
+				t.Errorf("token leaked into log output: %s", out)
 			}
 		})
 	}
@@ -196,6 +284,66 @@ func TestHFResolver_CacheHit(t *testing.T) {
 	}
 }
 
+// TestHFResolver_NoContentLengthForcesRedownload verifies that when the HEAD
+// response omits Content-Length, the resolver re-downloads the file rather
+// than trusting whatever bytes happen to be on disk. This closes the pre-
+// seeded cache attack: an attacker who plants a file named like a real
+// artifact in the cache must NOT be able to bypass verification just because
+// the upstream server doesn't advertise sizes.
+func TestHFResolver_NoContentLengthForcesRedownload(t *testing.T) {
+	getCount := int32(0)
+	body := []byte(`{"key":"fresh"}`)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/models/") {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"siblings": []map[string]string{{"rfilename": "config.json"}},
+			})
+			return
+		}
+		if r.Method == http.MethodHead {
+			// Deliberately NO Content-Length set.
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		atomic.AddInt32(&getCount, 1)
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	cacheDir := t.TempDir()
+	// Pre-seed the cache with garbage bytes the attacker controls.
+	preseedDir := filepath.Join(cacheDir, "org", "model", "main")
+	if err := os.MkdirAll(preseedDir, 0o755); err != nil {
+		t.Fatalf("preseed mkdir: %v", err)
+	}
+	preseedPath := filepath.Join(preseedDir, "config.json")
+	preseed := []byte("attacker-controlled-garbage")
+	if err := os.WriteFile(preseedPath, preseed, 0o644); err != nil {
+		t.Fatalf("preseed write: %v", err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	r := NewResolverWithOptions(logger, WithHFBaseURL(srv.URL), WithHFCacheDir(cacheDir))
+
+	pkg, err := r.Resolve("hf:org/model")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(pkg.Path, "config.json"))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if string(got) == string(preseed) {
+		t.Errorf("cache was not invalidated — pre-seeded bytes still on disk")
+	}
+	if string(got) != string(body) {
+		t.Errorf("unexpected file contents: %q", got)
+	}
+	if atomic.LoadInt32(&getCount) == 0 {
+		t.Errorf("expected at least one GET request (re-download), got 0")
+	}
+}
+
 // ── error paths ────────────────────────────────────────────────────────────
 
 func TestHFResolver_Unauthorized(t *testing.T) {
@@ -262,5 +410,51 @@ func TestHFResolver_RetryOn5xx(t *testing.T) {
 	}
 	if calls < 2 {
 		t.Errorf("expected at least 2 manifest calls, got %d", calls)
+	}
+}
+
+// TestHFResolver_RetryAfterHonored verifies that a 429 with Retry-After is
+// honoured — the resolver waits the indicated number of seconds before the
+// next attempt.
+func TestHFResolver_RetryAfterHonored(t *testing.T) {
+	manifestCalls := int32(0)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/models/") {
+			n := atomic.AddInt32(&manifestCalls, 1)
+			if n == 1 {
+				// First attempt: rate-limit, ask for a 1-second wait.
+				w.Header().Set("Retry-After", "1")
+				w.WriteHeader(http.StatusTooManyRequests)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"siblings": []map[string]string{{"rfilename": "config.json"}},
+			})
+			return
+		}
+		if r.Method == http.MethodHead {
+			w.Header().Set("Content-Length", "1")
+			return
+		}
+		_, _ = w.Write([]byte("x"))
+	}))
+	defer srv.Close()
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	r := NewResolverWithOptions(logger,
+		WithHFBaseURL(srv.URL),
+		WithHFCacheDir(t.TempDir()),
+	)
+
+	start := time.Now()
+	if _, err := r.Resolve("hf:org/model"); err != nil {
+		t.Fatalf("expected success after 429+Retry-After, got: %v", err)
+	}
+	elapsed := time.Since(start)
+	if elapsed < 1*time.Second {
+		t.Errorf("expected to wait at least 1s for Retry-After, waited %v", elapsed)
+	}
+	if got := atomic.LoadInt32(&manifestCalls); got < 2 {
+		t.Errorf("expected at least 2 manifest calls, got %d", got)
 	}
 }
