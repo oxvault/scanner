@@ -34,3 +34,15 @@ scan-demo: build
 	@echo ""
 	@echo "=== Scanning cmd-injection example ==="
 	@./$(BIN) scan ./examples/vulnerable-servers/cmd-injection/ --skip-manifest || true
+	@echo ""
+	@echo "=== AIBOM v0.4 — pickle RCE ==="
+	@./$(BIN) scan ./examples/vulnerable-models/pickle-rce/weights.pkl || true
+	@echo ""
+	@echo "=== AIBOM v0.4 — safetensors header overflow ==="
+	@./$(BIN) scan ./examples/vulnerable-models/safetensors-overflow/model.safetensors || true
+	@echo ""
+	@echo "=== AIBOM v0.4 — ONNX malformed protobuf ==="
+	@./$(BIN) scan ./examples/vulnerable-models/onnx-malformed/model.onnx || true
+	@echo ""
+	@echo "=== AIBOM v0.4 — model card prompt injection ==="
+	@./$(BIN) scan ./examples/vulnerable-models/modelcard-poisoned/ || true

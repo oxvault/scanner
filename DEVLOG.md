@@ -1,5 +1,35 @@
 # Scanner Development Log
 
+## Day 10 — v0.4.0 release prep — 2026-04-28
+
+Branch: `feat/aibom-day10-release`
+
+### What shipped
+- `examples/vulnerable-models/` — 5 demo dirs covering each AIBOM detection class (pickle RCE, safetensors overflow, ONNX malformed, model card poisoning, unsigned)
+- Top-level `examples/vulnerable-models/README.md` explaining each pattern
+- `Makefile` `scan-demo` target extended — now scans both vulnerable-servers AND vulnerable-models
+- `internal/version/version.go` bumped to `v0.4.0`
+- `CHANGELOG.md` created with full v0.4.0 release notes (rule IDs, CLI flags, deps, deferred work, breaking changes = none)
+
+### v0.4.0 ships
+- 5 new sub-providers (pickle, safetensors, onnx, modelcard, signature)
+- ~38 new aibom-* detection rules
+- Hugging Face resolver (`oxvault scan hf:org/model`)
+- 8 new CLI flags
+- 1 new dep (gopkg.in/yaml.v3)
+- 0 breaking changes
+
+### Test count
+- ~672 tests passing across all packages (up from ~480 in v0.3.3)
+- 25+ AIBOM binary fixtures in `testdata/aibom/`
+- All quality gates green: `make build`, `make test`, `make lint`, `make scan-demo`
+
+### Deferred
+- v0.4.1: Sigstore Rekor/Fulcio chain verification, cross-resolve cache cap, ctx plumbing
+- v0.5: RAG corpus scanning
+
+---
+
 ## Day 9 — Engine wiring + CLI flag surface — 2026-04-28
 
 Branch: `feat/aibom-day9-cli`
