@@ -41,5 +41,7 @@ ONNX is protobuf-encoded. Garbage bytes that fail to parse are either corruption
 ### modelcard-poisoned
 Model cards (README.md, model_card.yaml) ship alongside HF models. Hidden Unicode tags, BiDi reversal, and `<IMPORTANT>` blocks can poison agents that read the card.
 
+This demo includes a clean `weights.pkl` next to the poisoned `README.md` — the scanner treats a directory as "model" only when at least one model artifact lives alongside the card. Bare card-only dirs route as MCP and skip AIBOM checks.
+
 ### unsigned
 Clean model, but no signature manifest. Lower severity than active attacks, but provenance gaps matter for compliance (EU AI Act, NSA AI Supply Chain).
