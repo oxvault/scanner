@@ -87,6 +87,13 @@ func NewComposer(opts ...ComposerOption) AIBOMComposer {
 //     artifact (.pkl/.pt/.onnx/.safetensors) but no model card alongside it.
 //     The composer tracks artifact + card directories during the walk and
 //     emits the missing-card finding once the walk completes.
+//   - Signature verification runs on every model artifact (single file
+//     OR directory walk). For a single-file scan, aibom-signature-missing
+//     is filtered out — the user is targeting an artifact in isolation,
+//     not declaring "this directory should have a signature" — but every
+//     other signature finding (hash mismatch, untrusted issuer, malformed
+//     manifest) is preserved so the canonical sign-then-tamper attack is
+//     detected on `oxvault scan ./tampered.pkl`.
 func (c *composer) Scan(path string) []Finding {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -94,17 +101,35 @@ func (c *composer) Scan(path string) []Finding {
 	}
 
 	if !info.IsDir() {
-		return c.dispatch(path)
+		findings := c.dispatch(path)
+		// Single-file branch must also run signature verification so the
+		// canonical sign-then-tamper attack fires on a single-file scan
+		// (without this, `oxvault scan ./tampered.pkl` with a sibling
+		// manifest declaring the wrong hash would be silent). The
+		// aibom-signature-missing rule is filtered — it only makes sense
+		// in directory aggregation where the user is declaring "this
+		// directory IS the model".
+		if isModelArtifactPath(path) {
+			sigFindings := c.signature.VerifyArtifact(path)
+			for _, f := range sigFindings {
+				if f.Rule == RuleSignatureMissing {
+					continue
+				}
+				findings = append(findings, f)
+			}
+		}
+		return findings
 	}
 
 	var findings []Finding
 	// Cross-file aggregation: track which directories contain a model
 	// artifact and which contain a model card. After the walk we emit one
 	// aibom-modelcard-missing per artifact directory without a card, and
-	// one signature-missing (or clean) per artifact via the SignatureVerifier.
-	// The per-directory CheckDirectory / VerifyDirectory entry points are
-	// NOT called — the composer owns the aggregation so the rules fire on
-	// every real `oxvault scan ./model-dir` invocation, not just direct
+	// one signature-missing (or hash-match / hash-mismatch / etc.) per
+	// artifact via the SignatureVerifier. The per-directory CheckDirectory
+	// / VerifyDirectory entry points are NOT called — the composer owns
+	// the aggregation so the rules fire on every real
+	// `oxvault scan ./model-dir` invocation, not just direct
 	// CheckDirectory / VerifyDirectory callers.
 	hasArtifact := map[string]bool{}
 	hasCard := map[string]bool{}
@@ -124,8 +149,21 @@ func (c *composer) Scan(path string) []Finding {
 	})
 
 	findings = append(findings, missingCardFindings(hasArtifact, hasCard)...)
-	findings = append(findings, missingSignatureFindings(c.signature, artifactPaths)...)
+	findings = append(findings, signatureFindings(c.signature, artifactPaths)...)
 	return findings
+}
+
+// isModelArtifactPath returns true when path's detected ArtifactFormat is
+// one of the model-artifact families (pickle, ONNX, safetensors). Used by
+// the single-file Scan branch to decide whether to run signature
+// verification.
+func isModelArtifactPath(path string) bool {
+	switch DetectArtifactFormat(path) {
+	case FormatPickle, FormatONNX, FormatSafetensors:
+		return true
+	default:
+		return false
+	}
 }
 
 // dispatch routes a single file to the sub-provider matching its

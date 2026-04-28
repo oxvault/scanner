@@ -124,8 +124,11 @@ oxvault scan ./model.pkl                 # ML model artifact (v0.4)
 | **Oversized initializer** | Tensor dim product over 256 M elements (OOM during model load) | CWE-400 |
 | **Model card prompt injection** | README.md / model_card.yaml carrying `<IMPORTANT>` tags, BiDi reversal, "ignore previous" instructions | CWE-1039 |
 | **Missing license / source / eval** | Provenance gaps in model card frontmatter and body | — |
-| **Signature mismatch** | OpenSSF Model Signing manifest hash != actual artifact SHA-256 | CWE-353 |
-| **Untrusted signature issuer** | OIDC issuer not in configured trusted-issuer list | CWE-347 |
+| **Signature mismatch** | OpenSSF Model Signing manifest hash != actual artifact SHA-256 (canonical sign-then-tamper attack) | CWE-353 |
+| **Untrusted signature issuer** | OIDC issuer not in configured trusted-issuer list (self-declared in v0.4) | CWE-347 |
+| **Malformed sigstore bundle** | `.sigstore` file missing all spec-shaped top-level keys (mediaType, messageSignature, verificationMaterial, dsseEnvelope) | CWE-345 |
+
+> **v0.4 trust posture:** signature verification is **hash-only**. The manifest's issuer field is **self-declared** by whoever wrote the manifest — the v0.4 verifier does NOT cryptographically prove who signed. v0.4.1 adds Rekor/Fulcio chain verification and a separate `aibom-signature-clean` rule for fully-verified provenance. v0.4 manifests with matching hashes emit `aibom-signature-hash-match` (INFO); `.sigstore` and `.sig` carriers emit `aibom-signature-presence-deferred` (INFO).
 
 ## Quick Start
 

@@ -511,10 +511,10 @@ var ModelCardCitationRegex = regexp.MustCompile(`(?i)(\[[^\]]+\]\([^)]+\)|arxiv[
 // cryptographic provenance.
 
 // MaxSignatureManifestBytes caps the on-disk size of a signature manifest
-// (`model_signing.json`, `manifest.json`) and a sigstore bundle (`.sigstore`)
-// the verifier will read. Real-world manifests are tiny (a few KiB at most);
-// anything beyond 256 KiB is either generated noise or an attempt to drown
-// the JSON parser in irrelevant bytes.
+// (`model_signing.json`) and a sigstore bundle (`.sigstore`) the verifier
+// will read. Real-world manifests are tiny (a few KiB at most); anything
+// beyond 256 KiB is either generated noise or an attempt to drown the
+// JSON parser in irrelevant bytes.
 const MaxSignatureManifestBytes int64 = 256 * 1024
 
 // DefaultTrustedSignatureIssuers is the seed list of OIDC identity issuers
@@ -537,9 +537,29 @@ var DefaultTrustedSignatureIssuers = []string{
 // SignatureManifestNames lists the basenames the verifier recognises as
 // OpenSSF Model Signing manifests. The match is case-insensitive (the
 // verifier lowercases before lookup).
+//
+// `manifest.json` is intentionally excluded — too many unrelated tools
+// (npm, build systems, OCI images) produce a bare `manifest.json` that
+// has nothing to do with model signing. Honouring it would let an
+// attacker spoof a missing-signature finding by dropping any random
+// JSON file named `manifest.json` next to a tampered artifact. Only
+// the OpenSSF spec basename is recognised.
 var SignatureManifestNames = map[string]bool{
 	"model_signing.json": true,
-	"manifest.json":      true,
+}
+
+// SigstoreBundleSpecKeys is the set of top-level keys at least one of which
+// MUST be present in a `.sigstore` bundle for it to be treated as a real
+// Sigstore bundle. An empty `{}` or any random JSON object (e.g. a build
+// tool's metadata) is otherwise indistinguishable from a real bundle by
+// JSON-shape alone.
+//
+// Reference: https://github.com/sigstore/protobuf-specs — `Bundle` proto.
+var SigstoreBundleSpecKeys = []string{
+	"mediaType",
+	"messageSignature",
+	"verificationMaterial",
+	"dsseEnvelope",
 }
 
 // SigstoreBundleExt is the file extension for a Sigstore bundle (.sigstore).
