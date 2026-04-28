@@ -100,13 +100,15 @@ func (c *composer) Scan(path string) []Finding {
 	var findings []Finding
 	// Cross-file aggregation: track which directories contain a model
 	// artifact and which contain a model card. After the walk we emit one
-	// aibom-modelcard-missing per artifact directory without a card. The
-	// per-directory CheckDirectory entry point on ModelCardChecker is NOT
-	// called — the composer owns the aggregation so it fires on every real
-	// `oxvault scan ./model-dir` invocation, not just direct CheckDirectory
-	// callers.
+	// aibom-modelcard-missing per artifact directory without a card, and
+	// one signature-missing (or clean) per artifact via the SignatureVerifier.
+	// The per-directory CheckDirectory / VerifyDirectory entry points are
+	// NOT called — the composer owns the aggregation so the rules fire on
+	// every real `oxvault scan ./model-dir` invocation, not just direct
+	// CheckDirectory / VerifyDirectory callers.
 	hasArtifact := map[string]bool{}
 	hasCard := map[string]bool{}
+	var artifactPaths []string
 
 	// Reuse the shared walker so directory/file exclusion stays consistent
 	// across providers (SAST, dep-audit, AIBOM). Symlinks are not followed.
@@ -114,6 +116,7 @@ func (c *composer) Scan(path string) []Finding {
 		switch DetectArtifactFormat(p) {
 		case FormatPickle, FormatONNX, FormatSafetensors:
 			hasArtifact[filepath.Dir(p)] = true
+			artifactPaths = append(artifactPaths, p)
 		case FormatModelCard:
 			hasCard[filepath.Dir(p)] = true
 		}
@@ -121,11 +124,18 @@ func (c *composer) Scan(path string) []Finding {
 	})
 
 	findings = append(findings, missingCardFindings(hasArtifact, hasCard)...)
+	findings = append(findings, missingSignatureFindings(c.signature, artifactPaths)...)
 	return findings
 }
 
 // dispatch routes a single file to the sub-provider matching its
 // ArtifactFormat. Files of FormatUnknown are skipped silently.
+//
+// FormatSignature files (.sigstore, .sig, .pem, .cert) are also dispatched
+// to SignatureVerifier so the verifier can short-circuit (carriers are
+// evaluated FROM the artifact's perspective, not the signature file's).
+// Cross-file aggregation in Scan() handles the actual per-artifact
+// verification.
 func (c *composer) dispatch(path string) []Finding {
 	switch DetectArtifactFormat(path) {
 	case FormatPickle:

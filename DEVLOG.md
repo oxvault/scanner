@@ -1,5 +1,44 @@
 # Scanner Development Log
 
+## Day 7 — Signature verifier — 2026-04-27
+
+Branch: `feat/aibom-day7-signature`
+
+### What shipped
+- `providers/signature.go` — `SignatureVerifier` provider that verifies ML model artifacts against the OpenSSF Model Signing JSON manifest format (`model_signing.json` / `manifest.json`)
+- Hash-only verification for v0.4 — full Sigstore Rekor/Fulcio verification deferred to v0.4.1. Sigstore bundles (`.sigstore`) get presence + JSON-shape checks; loose detached signatures (`.sig`) get presence-only checks
+- `WithTrustedIssuers([]string)` functional option lets callers configure the OIDC issuer allowlist; when empty, falls back to `patterns.DefaultTrustedSignatureIssuers` (Google, GitHub Actions OIDC, Sigstore public good, Microsoft, GitLab)
+- Streaming SHA-256 (`io.Copy(sha256.New(), f)`) — multi-GB checkpoints don't OOM the scanner
+- 256 KiB cap on manifest + bundle reads (`patterns.MaxSignatureManifestBytes`) so a hostile producer can't drown the JSON parser
+- `defer recover()` with named return — same panic-safety pattern locked in during Day 5 onnx and Day 6 modelcard
+- Cross-file aggregation lives in `AIBOMComposer.Scan()`: every model artifact (`.pkl` / `.pt` / `.onnx` / `.safetensors`) gets a `signature.VerifyArtifact(path)` call after the per-file dispatch, mirroring the missing-card aggregation pattern
+
+### Rule IDs
+| Rule | Severity | Trigger | CWE |
+| --- | --- | --- | --- |
+| `aibom-signature-clean` | INFO | manifest verified (hash match + trusted issuer) OR sigstore bundle / .sig present | — |
+| `aibom-signature-missing` | WARNING | no signature carrier alongside artifact | CWE-347 |
+| `aibom-signature-invalid` | CRITICAL | manifest present but does not list this artifact | CWE-347 |
+| `aibom-signature-untrusted-issuer` | HIGH | manifest issuer empty or not in configured trusted set | CWE-347 |
+| `aibom-signature-hash-mismatch` | CRITICAL | manifest SHA-256 != actual artifact SHA-256 | CWE-353 |
+| `aibom-signature-malformed-manifest` | WARNING | manifest JSON parse fails / size cap exceeded / panic | CWE-20 |
+
+### Key design decisions
+- **Pure stdlib crypto:** `crypto/sha256`, `encoding/hex`, `encoding/base64`, `encoding/json`. NO Sigstore SDK, NO protobuf bindings. The Sigstore SDK is a Day 8+ decision and would land in v0.4.1 alongside Rekor/Fulcio verification.
+- **Verifier-looks-for-paired-files:** the composer dispatches per-file by `ArtifactFormat`. Rather than wire artifact↔signature pairing into the dispatcher (which would mean two arguments to `VerifyArtifact`), the verifier itself looks in the artifact's directory for `model_signing.json`, `manifest.json`, `<artifact>.sigstore`, or `<artifact>.sig`. Matches the modelcard-checker aggregation pattern. Single-argument interface stays clean.
+- **WithTrustedIssuers REPLACES the default list:** users who pass `WithTrustedIssuers([]string{"https://corp.internal"})` get exactly that one issuer trusted. Defaults are NOT silently merged in — explicit-only, no surprises.
+- **Carriers no-op when dispatched directly:** when the composer dispatches a `.sigstore` / `.sig` file via `FormatSignature`, `VerifyArtifact` returns nil. Signatures are evaluated FROM the artifact's perspective only — handing the verifier a carrier directly would otherwise double-count when the composer's walk reaches both the carrier and the artifact in the same directory.
+- **Single-file scans skip aggregation:** `composer.Scan(path)` on a single artifact file does NOT fire `aibom-signature-missing`, mirroring the missing-card convention. Aggregation only runs on directory walks where the user is declaring "this directory is the model".
+
+### Files
+- `providers/signature.go` (real implementation, replaces Day 1 skeleton)
+- `providers/signature_test.go` (16 test functions, fixture suite + synthesised edge cases + composer integration)
+- `providers/aibom_composer.go` (composer drives missing-signature aggregation alongside missing-card)
+- `providers/aibom_composer_test.go` (updated VerifyArtifactCount expectation: 1 dispatch + 3 aggregation)
+- `patterns/aibom.go` (signature manifest constants, trusted issuer list, ext patterns)
+- `scripts/gen_aibom_fixtures.py` (extended with 6 signature fixtures)
+- `testdata/aibom/signature/` (safe + malicious fixtures)
+
 ## Day 6 — Model card checker — 2026-04-27
 
 Branch: `feat/aibom-day6-modelcard`

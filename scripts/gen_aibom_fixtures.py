@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import struct
@@ -25,6 +26,7 @@ OUT = ROOT / "testdata" / "aibom" / "safetensors"
 PICKLE_OUT = ROOT / "testdata" / "aibom" / "pickle"
 ONNX_OUT = ROOT / "testdata" / "aibom" / "onnx"
 MODELCARD_OUT = ROOT / "testdata" / "aibom" / "modelcard"
+SIGNATURE_OUT = ROOT / "testdata" / "aibom" / "signature"
 
 
 def write_safetensors(
@@ -835,6 +837,149 @@ base_model: bert
     write_text(MODELCARD_OUT / "malicious" / "model_card.yaml", body)
 
 
+# ── signature fixtures ──────────────────────────────────────────────────────
+#
+# These fixtures exercise the providers/signature.go verifier. Each fixture
+# is a directory containing one model artifact (weights.pkl) plus its paired
+# signature carrier in a few flavours: a valid manifest with a matching
+# SHA-256, a manifest with a wrong hash, a manifest with an untrusted issuer,
+# a malformed JSON manifest, a sigstore bundle, and a no-signature-at-all
+# negative case.
+
+# Hand-crafted minimal pickle that the AIBOM detector treats as a model
+# artifact. Contents are inert — we never unpickle these in tests.
+_SIGNATURE_PICKLE_BODY = b"\x80\x04\x95\x05\x00\x00\x00\x00\x00\x00\x00K\x01."
+
+
+def _signature_artifact_sha256() -> str:
+    return hashlib.sha256(_SIGNATURE_PICKLE_BODY).hexdigest()
+
+
+def _write_signature_artifact(dir_path: Path, name: str = "weights.pkl") -> Path:
+    dir_path.mkdir(parents=True, exist_ok=True)
+    path = dir_path / name
+    path.write_bytes(_SIGNATURE_PICKLE_BODY)
+    return path
+
+
+def _write_signature_manifest(dir_path: Path, manifest: dict | str, name: str = "model_signing.json") -> None:
+    dir_path.mkdir(parents=True, exist_ok=True)
+    path = dir_path / name
+    if isinstance(manifest, str):
+        path.write_text(manifest, encoding="utf-8")
+    else:
+        path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+
+def gen_signature_safe_signed_model() -> None:
+    """A signed model directory: weights.pkl + a valid model_signing.json
+    whose SHA-256 matches the artifact and whose issuer is in the default
+    trusted-issuer list. Verifier emits aibom-signature-clean INFO.
+    """
+    dir_path = SIGNATURE_OUT / "safe" / "signed_model"
+    _write_signature_artifact(dir_path)
+    manifest = {
+        "version": "1.0",
+        "artifacts": [
+            {"path": "weights.pkl", "sha256": _signature_artifact_sha256()},
+        ],
+        "publisher": "did:web:oxvault.dev",
+        "signature": "ZHVtbXktc2lnLWZvci1maXh0dXJl",
+        "issuer": "https://accounts.google.com",
+    }
+    _write_signature_manifest(dir_path, manifest)
+
+
+def gen_signature_safe_sigstore_bundled() -> None:
+    """A sigstore-bundled model directory: model.onnx + model.onnx.sigstore.
+    The bundle parses as JSON; Day 7 only checks presence + JSON shape.
+    Verifier emits aibom-signature-clean INFO.
+    """
+    dir_path = SIGNATURE_OUT / "safe" / "sigstore_bundled"
+    dir_path.mkdir(parents=True, exist_ok=True)
+    # Minimal valid ONNX (1 Add node) — same byte recipe as the onnx fixture
+    # generator, kept inline to avoid coupling.
+    graph = _graph_proto(
+        nodes=[_node_proto(op_type="Add", domain="")],
+        initializers=[],
+    )
+    onnx_body = _model_proto(ir_version=7, producer_name="", graph=graph)
+    (dir_path / "model.onnx").write_bytes(onnx_body)
+    bundle = {
+        "mediaType": "application/vnd.dev.sigstore.bundle+json;version=0.3",
+        "verificationMaterial": {
+            "publicKey": {"hint": "fixture"},
+        },
+        "messageSignature": {
+            "messageDigest": {
+                "algorithm": "SHA2_256",
+                "digest": hashlib.sha256(onnx_body).hexdigest(),
+            },
+            "signature": "ZHVtbXktc2lnLWJ1bmRsZQ==",
+        },
+    }
+    (dir_path / "model.onnx.sigstore").write_text(
+        json.dumps(bundle, indent=2), encoding="utf-8"
+    )
+
+
+def gen_signature_malicious_no_sig() -> None:
+    """A model artifact with no signature carrier of any kind.
+    Verifier emits aibom-signature-missing WARNING.
+    """
+    dir_path = SIGNATURE_OUT / "malicious" / "no_sig"
+    _write_signature_artifact(dir_path)
+
+
+def gen_signature_malicious_hash_mismatch() -> None:
+    """A model artifact whose manifest declares the WRONG SHA-256.
+    Verifier emits aibom-signature-hash-mismatch CRITICAL.
+    """
+    dir_path = SIGNATURE_OUT / "malicious" / "hash_mismatch"
+    _write_signature_artifact(dir_path)
+    manifest = {
+        "version": "1.0",
+        "artifacts": [
+            {
+                "path": "weights.pkl",
+                # Wrong hash — 64 hex chars of zeros.
+                "sha256": "0" * 64,
+            },
+        ],
+        "publisher": "did:web:oxvault.dev",
+        "signature": "ZHVtbXktc2lnLWZvci1maXh0dXJl",
+        "issuer": "https://accounts.google.com",
+    }
+    _write_signature_manifest(dir_path, manifest)
+
+
+def gen_signature_malicious_untrusted_issuer() -> None:
+    """A model artifact with a valid hash but an issuer NOT in the trusted
+    set. Verifier emits aibom-signature-untrusted-issuer HIGH.
+    """
+    dir_path = SIGNATURE_OUT / "malicious" / "untrusted_issuer"
+    _write_signature_artifact(dir_path)
+    manifest = {
+        "version": "1.0",
+        "artifacts": [
+            {"path": "weights.pkl", "sha256": _signature_artifact_sha256()},
+        ],
+        "publisher": "did:web:attacker.example.com",
+        "signature": "ZHVtbXktc2lnLWZvci1maXh0dXJl",
+        "issuer": "https://attacker.example.com",
+    }
+    _write_signature_manifest(dir_path, manifest)
+
+
+def gen_signature_malicious_malformed_manifest() -> None:
+    """A model artifact whose model_signing.json is broken JSON.
+    Verifier emits aibom-signature-malformed-manifest WARNING.
+    """
+    dir_path = SIGNATURE_OUT / "malicious" / "malformed_manifest"
+    _write_signature_artifact(dir_path)
+    _write_signature_manifest(dir_path, "{not valid json")
+
+
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     gen_clean()
@@ -879,6 +1024,13 @@ def main() -> None:
     gen_modelcard_empty()
     gen_modelcard_yaml_only_clean()
     gen_modelcard_yaml_only_malformed()
+    SIGNATURE_OUT.mkdir(parents=True, exist_ok=True)
+    gen_signature_safe_signed_model()
+    gen_signature_safe_sigstore_bundled()
+    gen_signature_malicious_no_sig()
+    gen_signature_malicious_hash_mismatch()
+    gen_signature_malicious_untrusted_issuer()
+    gen_signature_malicious_malformed_manifest()
 
     # Print a concise manifest so CI logs document what was produced.
     for p in sorted(OUT.rglob("*.safetensors")):
@@ -892,6 +1044,10 @@ def main() -> None:
         rel = p.relative_to(ROOT)
         print(f"  {rel} ({p.stat().st_size} bytes)")
     for p in sorted(MODELCARD_OUT.rglob("*")):
+        if p.is_file():
+            rel = p.relative_to(ROOT)
+            print(f"  {rel} ({p.stat().st_size} bytes)")
+    for p in sorted(SIGNATURE_OUT.rglob("*")):
         if p.is_file():
             rel = p.relative_to(ROOT)
             print(f"  {rel} ({p.stat().st_size} bytes)")
