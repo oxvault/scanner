@@ -136,7 +136,7 @@ func newScanCmd() *cobra.Command {
 		// AIBOM tuning (v0.4)
 		maxPickleBytes            int64
 		trustedIssuersCSV         string
-		additionalTrustedIssusCSV string
+		additionalTrustedIssuersCSV string
 	)
 
 	cmd := &cobra.Command{
@@ -193,7 +193,7 @@ Config-based scanning:
 			if issuers := splitAndTrimCSV(trustedIssuersCSV); len(issuers) > 0 {
 				cfg.AIBOM.TrustedIssuers = issuers
 			}
-			if issuers := splitAndTrimCSV(additionalTrustedIssusCSV); len(issuers) > 0 {
+			if issuers := splitAndTrimCSV(additionalTrustedIssuersCSV); len(issuers) > 0 {
 				cfg.AIBOM.AdditionalTrustedIssuers = issuers
 			}
 
@@ -264,7 +264,7 @@ Config-based scanning:
 	// AIBOM tuning (v0.4)
 	cmd.Flags().Int64Var(&maxPickleBytes, "max-pickle-size", 0, "Max bytes for pickle disassembly (default: 2 GiB; values above the default are clamped)")
 	cmd.Flags().StringVar(&trustedIssuersCSV, "trusted-issuers", "", "Comma-separated OIDC issuer URLs that REPLACE the default trusted-issuer list for signature verification")
-	cmd.Flags().StringVar(&additionalTrustedIssusCSV, "additional-trusted-issuers", "", "Comma-separated OIDC issuer URLs that MERGE into the default trusted-issuer list")
+	cmd.Flags().StringVar(&additionalTrustedIssuersCSV, "additional-trusted-issuers", "", "Comma-separated OIDC issuer URLs that MERGE into the default trusted-issuer list")
 
 	return cmd
 }
@@ -283,6 +283,9 @@ func splitAndTrimCSV(s string) []string {
 		if t := strings.TrimSpace(p); t != "" {
 			out = append(out, t)
 		}
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }
