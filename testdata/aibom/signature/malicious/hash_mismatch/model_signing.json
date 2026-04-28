@@ -1,0 +1,12 @@
+{
+  "version": "1.0",
+  "artifacts": [
+    {
+      "path": "weights.pkl",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ],
+  "publisher": "did:web:oxvault.dev",
+  "signature": "ZHVtbXktc2lnLWZvci1maXh0dXJl",
+  "issuer": "https://accounts.google.com"
+}

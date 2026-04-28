@@ -197,8 +197,12 @@ func TestComposer_Scan_Directory_DispatchesEachFileByFormat(t *testing.T) {
 	if got := mocks.modelCard.CheckFileCount.Load(); got != 1 {
 		t.Errorf("ModelCardChecker.CheckFile: want 1, got %d", got)
 	}
-	if got := mocks.signature.VerifyArtifactCount.Load(); got != 1 {
-		t.Errorf("SignatureVerifier.VerifyArtifact: want 1, got %d", got)
+	// Expected calls: 1 from FormatSignature dispatch (.sigstore file) + 3
+	// from cross-file aggregation (one per model artifact: .pkl, .onnx,
+	// .safetensors). Day 7: the composer owns missing-signature aggregation,
+	// same pattern as missing-card aggregation.
+	if got := mocks.signature.VerifyArtifactCount.Load(); got != 4 {
+		t.Errorf("SignatureVerifier.VerifyArtifact: want 4 (1 dispatch + 3 aggregation), got %d", got)
 	}
 
 	// Directory-scoped methods must NOT be called — the composer owns the walk.

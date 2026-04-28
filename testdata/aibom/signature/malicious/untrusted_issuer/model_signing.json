@@ -1,0 +1,12 @@
+{
+  "version": "1.0",
+  "artifacts": [
+    {
+      "path": "weights.pkl",
+      "sha256": "8a1326bd9e7b3fd7a4dd89975303299d903e70e2ef65125a74dcc757bba94400"
+    }
+  ],
+  "publisher": "did:web:attacker.example.com",
+  "signature": "ZHVtbXktc2lnLWZvci1maXh0dXJl",
+  "issuer": "https://attacker.example.com"
+}

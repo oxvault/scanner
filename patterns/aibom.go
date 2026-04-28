@@ -497,3 +497,92 @@ var ModelCardClaimRegex = regexp.MustCompile(`(?i)\b(accuracy|f1|f-1|auc|auroc|a
 // body has an explicit ## Evaluation / ## Benchmarks heading), the no-eval
 // check passes.
 var ModelCardCitationRegex = regexp.MustCompile(`(?i)(\[[^\]]+\]\([^)]+\)|arxiv[:\.\s][\d\.]+|doi[:\s]|https?://[^\s)]+|see\s+(table|figure)\s+\d+|@[a-z][a-z0-9_-]+\b)`)
+
+// ── signature verifier data ─────────────────────────────────────────────────
+//
+// These lists feed providers/signature.go. Pure data only — no behaviour.
+// Keeping them in patterns/ honours the project's layering rule:
+// providers/ depends on patterns/, never the reverse.
+//
+// Day 7 ships hash-manifest verification only — the OpenSSF Model Signing
+// JSON manifest format. Full Sigstore Rekor/Fulcio verification is deferred
+// to v0.4.1; for now we recognise .sigstore bundle files (presence + JSON
+// shape) and loose .sig files (presence only) without verifying their
+// cryptographic provenance.
+
+// MaxSignatureManifestBytes caps the on-disk size of a signature manifest
+// (`model_signing.json`) and a sigstore bundle (`.sigstore`) the verifier
+// will read. Real-world manifests are tiny (a few KiB at most); anything
+// beyond 256 KiB is either generated noise or an attempt to drown the
+// JSON parser in irrelevant bytes.
+const MaxSignatureManifestBytes int64 = 256 * 1024
+
+// DefaultTrustedSignatureIssuers is the seed list of OIDC identity issuers
+// the verifier accepts when WithTrustedIssuers is not supplied. These are the
+// issuers commonly seen in OpenSSF Model Signing manifests and Sigstore
+// keyless workflows.
+//
+// Users can extend or replace this list via WithTrustedIssuers — the list
+// here is intentionally narrow to avoid accidentally trusting issuers a user
+// did not vet.
+var DefaultTrustedSignatureIssuers = []string{
+	"https://accounts.google.com",
+	"https://github.com/login/oauth",
+	"https://token.actions.githubusercontent.com",
+	"https://oauth2.sigstore.dev/auth",
+	"https://login.microsoftonline.com",
+	"https://gitlab.com",
+}
+
+// SignatureManifestNames lists the basenames the verifier recognises as
+// OpenSSF Model Signing manifests. The match is case-insensitive (the
+// verifier lowercases before lookup).
+//
+// `manifest.json` is intentionally excluded — too many unrelated tools
+// (npm, build systems, OCI images) produce a bare `manifest.json` that
+// has nothing to do with model signing. Honouring it would let an
+// attacker spoof a missing-signature finding by dropping any random
+// JSON file named `manifest.json` next to a tampered artifact. Only
+// the OpenSSF spec basename is recognised.
+var SignatureManifestNames = map[string]bool{
+	"model_signing.json": true,
+}
+
+// SigstoreBundleSpecKeys is the set of top-level keys at least one of which
+// MUST be present in a `.sigstore` bundle for it to be treated as a real
+// Sigstore bundle. An empty `{}` or any random JSON object (e.g. a build
+// tool's metadata) is otherwise indistinguishable from a real bundle by
+// JSON-shape alone.
+//
+// Reference: https://github.com/sigstore/protobuf-specs — `Bundle` proto.
+var SigstoreBundleSpecKeys = []string{
+	"mediaType",
+	"messageSignature",
+	"verificationMaterial",
+	"dsseEnvelope",
+}
+
+// SigstoreBundleExt is the file extension for a Sigstore bundle (.sigstore).
+// Day 7 only checks presence + JSON shape — Rekor/Fulcio verification is
+// deferred to v0.4.1.
+const SigstoreBundleExt = ".sigstore"
+
+// LooseSignatureExt is the file extension for a loose detached signature
+// (.sig). Day 7 only checks presence — the signature payload itself is not
+// inspected.
+const LooseSignatureExt = ".sig"
+
+// SignatureModelArtifactExtensions is the set of file extensions the
+// signature verifier treats as "model artifacts" for the purposes of looking
+// for paired signature files. This intentionally mirrors the artifact
+// formats handled by the AIBOM pickle / onnx / safetensors providers.
+var SignatureModelArtifactExtensions = map[string]bool{
+	".pkl":         true,
+	".pickle":      true,
+	".pt":          true,
+	".pth":         true,
+	".bin":         true,
+	".ckpt":        true,
+	".onnx":        true,
+	".safetensors": true,
+}
