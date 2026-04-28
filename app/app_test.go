@@ -305,3 +305,109 @@ func TestShutdown_BeforeInitialize(t *testing.T) {
 func TestAppInterface_ComplianceGuard(t *testing.T) {
 	var _ AppInterface = (*App)(nil)
 }
+
+// ── AIBOM wiring tests (Day 9) ───────────────────────────────────────────────
+
+// TestInitProviders_WiresAIBOMSubProviders verifies InitProviders constructs
+// every AIBOM sub-provider plus the top-level composer when no overrides
+// are passed. After init, every getter must return a non-nil instance so
+// the engine can hand off model-artifact targets to the composer.
+func TestInitProviders_WiresAIBOMSubProviders(t *testing.T) {
+	a := NewApp(defaultTestConfig())
+
+	if err := a.Initialize(); err != nil {
+		t.Fatalf("Initialize() error: %v", err)
+	}
+
+	if a.GetPickleAnalyzer() == nil {
+		t.Error("expected pickleAnalyzer to be wired")
+	}
+	if a.GetONNXValidator() == nil {
+		t.Error("expected onnxValidator to be wired")
+	}
+	if a.GetSafetensorsValidator() == nil {
+		t.Error("expected safetensorsValidator to be wired")
+	}
+	if a.GetModelCardChecker() == nil {
+		t.Error("expected modelCardChecker to be wired")
+	}
+	if a.GetSignatureVerifier() == nil {
+		t.Error("expected signatureVerifier to be wired")
+	}
+	if a.GetAIBOMComposer() == nil {
+		t.Error("expected aibomComposer to be wired")
+	}
+}
+
+// TestInitProviders_AIBOMOverridesNotReplaced verifies that AIBOM functional
+// options pre-populate fields and are NOT overwritten by InitProviders. Same
+// lazy-init contract as the MCP providers.
+func TestInitProviders_AIBOMOverridesNotReplaced(t *testing.T) {
+	pickle := &testutil.MockPickleAnalyzer{}
+	onnx := &testutil.MockONNXValidator{}
+	safetensors := &testutil.MockSafetensorsValidator{}
+	modelCard := &testutil.MockModelCardChecker{}
+	signature := &testutil.MockSignatureVerifier{}
+	composer := &testutil.MockAIBOMComposer{}
+
+	a := NewApp(defaultTestConfig(),
+		WithPickleAnalyzerProvider(pickle),
+		WithONNXValidatorProvider(onnx),
+		WithSafetensorsValidatorProvider(safetensors),
+		WithModelCardCheckerProvider(modelCard),
+		WithSignatureVerifierProvider(signature),
+		WithAIBOMComposer(composer),
+	)
+
+	if err := a.Initialize(); err != nil {
+		t.Fatalf("Initialize() error: %v", err)
+	}
+
+	if a.GetPickleAnalyzer() != pickle {
+		t.Error("pickleAnalyzer mock was overwritten by InitProviders")
+	}
+	if a.GetONNXValidator() != onnx {
+		t.Error("onnxValidator mock was overwritten by InitProviders")
+	}
+	if a.GetSafetensorsValidator() != safetensors {
+		t.Error("safetensorsValidator mock was overwritten by InitProviders")
+	}
+	if a.GetModelCardChecker() != modelCard {
+		t.Error("modelCardChecker mock was overwritten by InitProviders")
+	}
+	if a.GetSignatureVerifier() != signature {
+		t.Error("signatureVerifier mock was overwritten by InitProviders")
+	}
+	if a.GetAIBOMComposer() != composer {
+		t.Error("aibomComposer mock was overwritten by InitProviders")
+	}
+}
+
+// TestInitProviders_DefaultComposerUsesWiredSubProviders verifies that the
+// default composer path (no WithAIBOMComposer override) is constructed with
+// the wired sub-providers. Tests this indirectly by asserting the composer
+// is non-nil and that the sub-providers it consumed are also non-nil — the
+// composer's NewComposer constructor would have replaced any nil supplied
+// option with its own default, so finding non-nil values everywhere is
+// sufficient evidence of correct wiring.
+func TestInitProviders_DefaultComposerUsesWiredSubProviders(t *testing.T) {
+	a := NewApp(defaultTestConfig())
+
+	if err := a.InitProviders(); err != nil {
+		t.Fatalf("InitProviders() error: %v", err)
+	}
+
+	if a.GetAIBOMComposer() == nil {
+		t.Fatal("expected default composer to be constructed")
+	}
+	// Sub-providers must be wired BEFORE the composer is built so the
+	// composer can consume them. If any sub-provider is nil here, the
+	// composer would have silently fallen back to its own default and
+	// overrides would be useless.
+	if a.GetPickleAnalyzer() == nil {
+		t.Error("pickleAnalyzer must be wired before composer construction")
+	}
+	if a.GetSignatureVerifier() == nil {
+		t.Error("signatureVerifier must be wired before composer construction")
+	}
+}

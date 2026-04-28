@@ -125,6 +125,18 @@ func newScanCmd() *cobra.Command {
 		hfCacheDir      string
 		hfMaxFileBytes  int64
 		hfMaxCacheBytes int64
+
+		// AIBOM sub-provider toggles (v0.4)
+		skipPickle      bool
+		skipONNX        bool
+		skipSafetensors bool
+		skipModelCard   bool
+		skipSignature   bool
+
+		// AIBOM tuning (v0.4)
+		maxPickleBytes            int64
+		trustedIssuersCSV         string
+		additionalTrustedIssuersCSV string
 	)
 
 	cmd := &cobra.Command{
@@ -174,6 +186,17 @@ Config-based scanning:
 				cfg.HF.MaxCacheBytes = hfMaxCacheBytes
 			}
 
+			// AIBOM tuning (v0.4)
+			if maxPickleBytes > 0 {
+				cfg.AIBOM.MaxPickleBytes = maxPickleBytes
+			}
+			if issuers := splitAndTrimCSV(trustedIssuersCSV); len(issuers) > 0 {
+				cfg.AIBOM.TrustedIssuers = issuers
+			}
+			if issuers := splitAndTrimCSV(additionalTrustedIssuersCSV); len(issuers) > 0 {
+				cfg.AIBOM.AdditionalTrustedIssuers = issuers
+			}
+
 			// Apply no-color globally before any output
 			if noColor || cfg.OutputFormat != providers.FormatTerminal {
 				color.NoColor = true
@@ -185,11 +208,16 @@ Config-based scanning:
 			}
 
 			scanOpts := engines.ScanOptions{
-				SkipSAST:     cfg.SkipSAST,
-				SkipManifest: cfg.SkipManifest,
-				SkipEgress:   cfg.SkipEgress,
-				ProbeNetwork: cfg.ProbeNetwork,
-				FailOn:       cfg.FailOn,
+				SkipSAST:        cfg.SkipSAST,
+				SkipManifest:    cfg.SkipManifest,
+				SkipEgress:      cfg.SkipEgress,
+				ProbeNetwork:    cfg.ProbeNetwork,
+				FailOn:          cfg.FailOn,
+				SkipPickle:      skipPickle,
+				SkipONNX:        skipONNX,
+				SkipSafetensors: skipSafetensors,
+				SkipModelCard:   skipModelCard,
+				SkipSignature:   skipSignature,
 			}
 
 			minConf := parseMinConfidence(minConfidence)
@@ -223,7 +251,43 @@ Config-based scanning:
 	cmd.Flags().Int64Var(&hfMaxFileBytes, "hf-max-file-bytes", 0, "Max bytes per HF file (default: 4 GiB)")
 	cmd.Flags().Int64Var(&hfMaxCacheBytes, "hf-max-cache-bytes", 0, "Max total HF cache bytes (default: 16 GiB)")
 
+	// AIBOM sub-provider toggles (v0.4) — each flag drops findings produced
+	// by the matching sub-provider after the composer returns. The composer
+	// itself stays untouched, mirroring how SkipSAST / SkipManifest gate
+	// MCP-side analyzers.
+	cmd.Flags().BoolVar(&skipPickle, "skip-pickle", false, "Skip pickle disassembler findings (aibom-pickle-*)")
+	cmd.Flags().BoolVar(&skipONNX, "skip-onnx", false, "Skip ONNX validator findings (aibom-onnx-*)")
+	cmd.Flags().BoolVar(&skipSafetensors, "skip-safetensors", false, "Skip safetensors validator findings (aibom-safetensors-*)")
+	cmd.Flags().BoolVar(&skipModelCard, "skip-modelcard", false, "Skip model card checker findings (aibom-modelcard-*)")
+	cmd.Flags().BoolVar(&skipSignature, "skip-signature", false, "Skip signature verifier findings (aibom-signature-*)")
+
+	// AIBOM tuning (v0.4)
+	cmd.Flags().Int64Var(&maxPickleBytes, "max-pickle-size", 0, "Max bytes for pickle disassembly (default: 2 GiB; values above the default are clamped)")
+	cmd.Flags().StringVar(&trustedIssuersCSV, "trusted-issuers", "", "Comma-separated OIDC issuer URLs that REPLACE the default trusted-issuer list for signature verification")
+	cmd.Flags().StringVar(&additionalTrustedIssuersCSV, "additional-trusted-issuers", "", "Comma-separated OIDC issuer URLs that MERGE into the default trusted-issuer list")
+
 	return cmd
+}
+
+// splitAndTrimCSV splits a comma-separated string and trims whitespace from
+// each element. Empty entries are dropped. Used by --trusted-issuers and
+// --additional-trusted-issuers so users can paste a list directly without
+// worrying about stray spaces.
+func splitAndTrimCSV(s string) []string {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if t := strings.TrimSpace(p); t != "" {
+			out = append(out, t)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // runSingleScan handles the traditional `oxvault scan <target>` path.

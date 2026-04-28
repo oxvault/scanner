@@ -40,13 +40,53 @@ const (
 	maxInnerPickles   = 16      // Max pickle entries we descend into per ZIP archive
 )
 
-// pickleAnalyzer is the production PickleAnalyzer. It is stateless — every
+// pickleAnalyzer is the production PickleAnalyzer. It is stateless apart
+// from the configured outer-file size cap (maxFileBytes when zero) — every
 // call to AnalyzeFile / AnalyzeDirectory creates a fresh disassembler.
-type pickleAnalyzer struct{}
+type pickleAnalyzer struct {
+	// maxBytes overrides the default outer-file size cap. Zero falls through
+	// to maxFileBytes (2 GiB), which is also the safety upper bound — a
+	// caller asking for a larger cap is silently clamped back to the
+	// default to keep DoS guarantees intact.
+	maxBytes int64
+}
+
+// PickleAnalyzerOption configures the analyzer. Functional-option style
+// matches the rest of the AIBOM module (composer, signature verifier).
+type PickleAnalyzerOption func(*pickleAnalyzer)
+
+// WithPickleMaxFileBytes overrides the outer-file size cap (default 2 GiB).
+// Values <= 0 leave the default in place; values exceeding the 2 GiB
+// hard ceiling are clamped down so the DoS guard cannot be widened beyond
+// what the disassembler is tested against.
+func WithPickleMaxFileBytes(n int64) PickleAnalyzerOption {
+	return func(p *pickleAnalyzer) {
+		if n <= 0 {
+			return
+		}
+		if n > int64(maxFileBytes) {
+			n = int64(maxFileBytes)
+		}
+		p.maxBytes = n
+	}
+}
 
 // NewPickleAnalyzer returns a PickleAnalyzer.
-func NewPickleAnalyzer() PickleAnalyzer {
-	return &pickleAnalyzer{}
+func NewPickleAnalyzer(opts ...PickleAnalyzerOption) PickleAnalyzer {
+	p := &pickleAnalyzer{}
+	for _, opt := range opts {
+		opt(p)
+	}
+	return p
+}
+
+// effectiveMaxBytes returns the configured cap, falling back to the package
+// default when the analyzer was constructed without a custom value.
+func (p *pickleAnalyzer) effectiveMaxBytes() int64 {
+	if p.maxBytes <= 0 {
+		return int64(maxFileBytes)
+	}
+	return p.maxBytes
 }
 
 // AnalyzeFile reads the file at path, disassembles its pickle opcode stream,
@@ -55,7 +95,7 @@ func NewPickleAnalyzer() PickleAnalyzer {
 // Files that look like a ZIP archive (PyTorch save format) are unwrapped
 // transparently and the inner data.pkl is analysed instead.
 func (p *pickleAnalyzer) AnalyzeFile(path string) []Finding {
-	return analyzePickleFile(path, 0)
+	return analyzePickleFile(path, 0, p.effectiveMaxBytes())
 }
 
 // AnalyzeDirectory walks dir and analyses every pickle/torch file found.
@@ -65,6 +105,7 @@ func (p *pickleAnalyzer) AnalyzeFile(path string) []Finding {
 // makes the analyzer usable standalone.
 func (p *pickleAnalyzer) AnalyzeDirectory(dir string) []Finding {
 	var findings []Finding
+	max := p.effectiveMaxBytes()
 	_ = filepath.Walk(dir, func(path string, info os.FileInfo, walkErr error) error {
 		if walkErr != nil {
 			return nil
@@ -78,7 +119,7 @@ func (p *pickleAnalyzer) AnalyzeDirectory(dir string) []Finding {
 		if DetectArtifactFormat(path) != FormatPickle {
 			return nil
 		}
-		findings = append(findings, analyzePickleFile(path, 0)...)
+		findings = append(findings, analyzePickleFile(path, 0, max)...)
 		return nil
 	})
 	return findings
@@ -88,7 +129,14 @@ func (p *pickleAnalyzer) AnalyzeDirectory(dir string) []Finding {
 // outer-file size cap via io.LimitReader, and then dispatches to analyzePickleBytes
 // which enforces the recursion-depth guard for every code path (file → zip →
 // inner pickle).
-func analyzePickleFile(path string, depth int) []Finding {
+//
+// The effective cap is supplied by the caller so PickleAnalyzer instances
+// constructed with WithPickleMaxFileBytes can apply a tighter limit. A
+// zero or negative max falls back to the package default.
+func analyzePickleFile(path string, depth int, maxBytes int64) []Finding {
+	if maxBytes <= 0 {
+		maxBytes = int64(maxFileBytes)
+	}
 	f, err := os.Open(path) //nolint:gosec // path is filesystem-walk scoped to the scan target.
 	if err != nil {
 		return nil
@@ -96,13 +144,13 @@ func analyzePickleFile(path string, depth int) []Finding {
 	defer func() { _ = f.Close() }()
 
 	// Bounded read: peek one extra byte so we can detect oversize files.
-	limited := io.LimitReader(f, int64(maxFileBytes)+1)
+	limited := io.LimitReader(f, maxBytes+1)
 	data, err := io.ReadAll(limited)
 	if err != nil {
 		return nil
 	}
 
-	if int64(len(data)) > int64(maxFileBytes) {
+	if int64(len(data)) > maxBytes {
 		return []Finding{{
 			Rule:            "aibom-pickle-truncated",
 			Severity:        SeverityWarning,
@@ -111,7 +159,7 @@ func analyzePickleFile(path string, depth int) []Finding {
 			File:            path,
 			Message: fmt.Sprintf(
 				"pickle file exceeds %d-byte safety cap — disassembly skipped",
-				maxFileBytes),
+				maxBytes),
 			CWE: "CWE-1287",
 		}}
 	}

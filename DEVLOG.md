@@ -1,5 +1,68 @@
 # Scanner Development Log
 
+## Day 9 — Engine wiring + CLI flag surface — 2026-04-28
+
+Branch: `feat/aibom-day9-cli`
+
+### What shipped
+- **`engines/scanner.go`** — replaced the Day 1-8 placeholder error (`"AIBOM scanning lands in v0.4 — wire-up coming Day 9"`) with real dispatch. `KindModelArtifact` and `KindModelDirectory` packages now flow through `scanModelArtifact()` which calls `aibomComposer.Scan(target)`, applies skip-flag filtering, and runs the same suppression + report shape used by MCP scans. **`oxvault scan ./model.pkl`, `oxvault scan ./model-dir/`, and `oxvault scan hf:org/model` are all functional end-to-end.**
+- **`engines.NewScanner`** — added `aibomComposer providers.AIBOMComposer` parameter (positioned after `netProbe`, before `logger`). Nil composer is allowed for tests that exercise the MCP-only flow; production wiring through `app.NewApp` always supplies one.
+- **`engines.ScanOptions`** — added `SkipPickle`, `SkipONNX`, `SkipSafetensors`, `SkipModelCard`, `SkipSignature` bool fields. Filtering happens AFTER the composer returns by rule-prefix match (`aibom-pickle-*` etc.) — composer stays untouched, mirroring `SkipSAST` / `SkipManifest` semantics on the MCP side.
+- **`app/app.go`** — added six AIBOM provider fields and getters (`pickleAnalyzer`, `onnxValidator`, `safetensorsValidator`, `modelCardChecker`, `signatureVerifier`, `aibomComposer`). Functional options follow the suffix-`Provider` convention (`WithPickleAnalyzerProvider`, `WithONNXValidatorProvider`, `WithSafetensorsValidatorProvider`, `WithModelCardCheckerProvider`, `WithSignatureVerifierProvider`, `WithAIBOMComposer`) — the suffix avoids colliding with `providers.WithPickleAnalyzer` (the composer-level option) at call sites that import both packages. `InitProviders` lazy-creates each sub-provider then wires them into the default composer (skipping when an override has supplied either the composer OR individual sub-providers).
+- **`app.AppInterface`** — extended with `GetPickleAnalyzer`, `GetONNXValidator`, `GetSafetensorsValidator`, `GetModelCardChecker`, `GetSignatureVerifier`, `GetAIBOMComposer` so the existing compile-time guard catches any future drift.
+- **`config.Config`** — new `AIBOM` section with `MaxPickleBytes`, `TrustedIssuers []string`, `AdditionalTrustedIssuers []string`. Empty values flow through as no-ops, preserving backwards-compatible defaults.
+- **`providers/pickle.go`** — `NewPickleAnalyzer` now accepts variadic `PickleAnalyzerOption` and `WithPickleMaxFileBytes(int64)` overrides the outer-file size cap. Values exceeding the 2 GiB hard ceiling are clamped down to keep DoS guarantees intact. `analyzePickleFile` signature picked up an explicit `maxBytes int64` parameter; non-positive values fall back to the package-level `maxFileBytes` constant. Internal-only callers (`AnalyzeFile`, `AnalyzeDirectory`) thread the configured cap through.
+- **`cmd/main.go`** — eight new flags on `scanCmd`:
+  - `--skip-pickle`, `--skip-onnx`, `--skip-safetensors`, `--skip-modelcard`, `--skip-signature` — bool gates that drop findings produced by the matching sub-provider after the composer returns.
+  - `--max-pickle-size <bytes>` — overrides the pickle disassembler's outer-file size cap.
+  - `--trusted-issuers <csv>` — REPLACES the default OIDC issuer allowlist used by `SignatureVerifier`. Wraps `providers.WithTrustedIssuers`.
+  - `--additional-trusted-issuers <csv>` — MERGES the supplied issuers into the default list. Wraps `providers.WithAdditionalTrustedIssuers`.
+  - New `splitAndTrimCSV` helper trims whitespace and drops empty entries so users can paste a list directly.
+
+### Tests
+- **`engines/scanner_test.go`** — replaced the obsolete `TestScanner_Scan_RejectsModelArtifactKind` with five new test groups:
+  - `TestScanner_Scan_ModelArtifactKind_DispatchesToComposer` — verifies single-file (Args[0] used as target), directory (Path used), and Args-empty fallback paths.
+  - `TestScanner_Scan_ModelArtifact_NoMCPSidePipeline` — pins that SAST, dep-audit, hook-analyzer, and MCPClient.Connect are NEVER called for model targets.
+  - `TestScanner_Scan_ModelArtifact_NoComposer_Errors` — verifies the nil-composer path returns a descriptive error instead of NPE.
+  - `TestScanner_Scan_ModelArtifact_SkipFlags` — table test (7 cases) covering each skip flag independently plus the "skip everything" case. Each case wires a `MockAIBOMComposer` returning all five rule families and asserts the expected subset survives filtering.
+  - `TestScanner_Scan_ModelDirectory_HFTarget` — simulates the HF resolver's output (Kind=KindModelDirectory + cache directory Path) and verifies dispatch works the same as a local directory scan.
+  - `TestScanner_Scan_ModelArtifact_SuppressionApplied` — pins that `.oxvaultignore` runs for AIBOM scans the same way it runs for MCP scans (regression guard on the suppression contract).
+- **`app/app_test.go`** — three new tests:
+  - `TestInitProviders_WiresAIBOMSubProviders` — Initialize wires every getter non-nil.
+  - `TestInitProviders_AIBOMOverridesNotReplaced` — functional options are not overwritten by InitProviders (lazy init contract).
+  - `TestInitProviders_DefaultComposerUsesWiredSubProviders` — the default composer path consumes the wired sub-providers (sub-providers must be created BEFORE the composer in InitProviders ordering).
+- All 8 existing scanner test helpers updated for the new `NewScanner` signature; `newTestScannerWithComposer` added so AIBOM-side tests don't need to wire the full mock surface manually.
+
+### Key design decisions
+- **Skip-flag filtering at the engine layer, not the composer:** the composer's contract stays "scan everything that's there"; the engine drops what the user asked to skip. This is identical to how `SkipSAST` and `SkipManifest` work for MCP scans, avoids re-constructing the composer per scan, and keeps `aibom_composer.go` untouched. Filtering is by rule-prefix (`aibom-pickle-*` etc.) so adding a new sub-provider only requires adding one prefix to `filterAIBOMFindings`.
+- **Single-file vs directory target selection:** the resolver places the absolute artifact filename in `pkg.Args[0]` for single-file targets and leaves `pkg.Path` pointing at the parent directory. The engine prefers `Args[0]` when present so the composer dispatches to ONE sub-provider rather than walking the parent directory (which would surface unrelated findings). Falls back to `Path` when `Args` is empty for robustness.
+- **Suppression dir for AIBOM scans uses pkg.Path (parent directory):** model authors can ship `.oxvaultignore` next to their weights without touching unrelated MCP server config. Same `Suppressor.LoadIgnoreFile + Filter` flow as MCP scans — no duplicate code path.
+- **Functional-option naming uses the `Provider` suffix to avoid package shadowing:** `WithPickleAnalyzer` already exists in `providers/aibom_composer.go` as a composer-level option. The app-container option is `WithPickleAnalyzerProvider` so callers (especially tests) that import both packages don't have to use ugly aliasing.
+- **`max-pickle-size` clamps down, never up:** values above the 2 GiB ceiling are silently clamped to the default. Allowing a wider cap would mean the disassembler would accept files larger than what the DoS guards are tested against — failure mode here is "scan stops early on huge file", which is the safer of the two.
+- **`--trusted-issuers` REPLACES, `--additional-trusted-issuers` MERGES:** matches the `providers.WithTrustedIssuers` / `WithAdditionalTrustedIssuers` semantics that landed in Day 7. `--trusted-issuers` is the "I know exactly which issuers I want" flag; `--additional-trusted-issuers` is the "extend the defaults" flag. The CLI help text calls out the difference explicitly so users picking the wrong one is recoverable.
+- **`AIBOMComposer` is optional in `NewScanner`:** wiring an AIBOM composer is mandatory for production (`app.InitEngines` always supplies one), but the parameter accepts nil for unit tests that only exercise the MCP-server flow. A nil composer hitting a model-artifact target returns a descriptive error rather than panicking — defence against accidental nil derefs in tests that build the engine directly.
+
+### Files
+- `engines/scanner.go` (Day 9 dispatch + ScanOptions extension + filterAIBOMFindings helper)
+- `engines/scanner_test.go` (six new test groups, table tests for skip flags)
+- `app/app.go` (six AIBOM fields, six functional options, six getters, AIBOM section in InitProviders, composer passed to NewScanner)
+- `app/app_test.go` (three new app wiring tests)
+- `config/config.go` (AIBOMOptions struct: MaxPickleBytes, TrustedIssuers, AdditionalTrustedIssuers)
+- `providers/pickle.go` (PickleAnalyzerOption + WithPickleMaxFileBytes; analyzePickleFile signature)
+- `cmd/main.go` (eight new scan flags: --skip-pickle, --skip-onnx, --skip-safetensors, --skip-modelcard, --skip-signature, --max-pickle-size, --trusted-issuers, --additional-trusted-issuers; splitAndTrimCSV helper)
+- `DEVLOG.md` (this entry)
+
+### Quality gates
+- `make build` — clean
+- `make test` — all packages pass (672 PASS subtests)
+- `make lint` — 0 issues
+- Manual end-to-end smoke:
+  - `oxvault scan ./testdata/aibom/pickle/malicious/os_system.pkl` — emits `aibom-pickle-os-system` CRITICAL plus suppression-deferred signature INFO
+  - `oxvault scan ./testdata/aibom/pickle/malicious/ --skip-pickle` — drops all `aibom-pickle-*` findings, surfaces `aibom-signature-missing` per artifact
+  - `oxvault scan ./testdata/aibom/pickle/malicious/ --skip-pickle --skip-signature` — only `aibom-modelcard-missing` survives
+
+---
+
 ## Day 8 — Hugging Face resolver — 2026-04-28
 
 Branch: `feat/aibom-day8-hf-resolver`

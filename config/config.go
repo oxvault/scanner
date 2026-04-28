@@ -27,6 +27,29 @@ type Config struct {
 
 	// Hugging Face resolver (v0.4 AIBOM)
 	HF HFOptions
+
+	// AIBOM scan options (v0.4)
+	AIBOM AIBOMOptions
+}
+
+// AIBOMOptions configure the AIBOM module (model artifact scanning). All
+// fields are optional — providers install sensible defaults when these are
+// left zero / empty.
+type AIBOMOptions struct {
+	// MaxPickleBytes overrides the outer-file size cap on pickle disassembly.
+	// Zero leaves the provider default in place (2 GiB). Values exceeding
+	// the provider's hard ceiling are clamped down inside the provider.
+	MaxPickleBytes int64
+
+	// TrustedIssuers REPLACES the default OIDC issuer allowlist used by
+	// SignatureVerifier. Empty leaves the defaults in place.
+	TrustedIssuers []string
+
+	// AdditionalTrustedIssuers MERGES the supplied issuers into the default
+	// OIDC issuer allowlist. Use this when you want to extend (not replace)
+	// the bundled defaults — e.g. accept the standard Sigstore public
+	// issuers AND your internal corporate OIDC.
+	AdditionalTrustedIssuers []string
 }
 
 // HFOptions configure the Hugging Face resolver. All fields are optional —

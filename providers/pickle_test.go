@@ -492,3 +492,39 @@ func TestPickleAnalyzer_NonexistentFile(t *testing.T) {
 		t.Errorf("expected nil for missing file, got %+v", findings)
 	}
 }
+
+// TestWithPickleMaxFileBytes_Clamping pins the documented DoS-guard contract
+// for WithPickleMaxFileBytes:
+//   - n <= 0 leaves the default in place
+//   - n within [1, ceiling] is applied verbatim
+//   - n > ceiling clamps DOWN to ceiling (never widens the cap)
+func TestWithPickleMaxFileBytes_Clamping(t *testing.T) {
+	ceiling := providers.PickleMaxFileBytesCeiling()
+
+	tests := []struct {
+		name string
+		opt  int64
+		want int64
+	}{
+		{name: "no override", opt: 0, want: ceiling},
+		{name: "negative is no-op", opt: -1, want: ceiling},
+		{name: "small custom", opt: 1024, want: 1024},
+		{name: "exactly ceiling", opt: ceiling, want: ceiling},
+		{name: "above ceiling clamps down", opt: ceiling + 1, want: ceiling},
+		{name: "way above ceiling clamps down", opt: 1 << 62, want: ceiling},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var p providers.PickleAnalyzer
+			if tt.opt == 0 {
+				p = providers.NewPickleAnalyzer()
+			} else {
+				p = providers.NewPickleAnalyzer(providers.WithPickleMaxFileBytes(tt.opt))
+			}
+			got := providers.EffectivePickleMaxBytes(p)
+			if got != tt.want {
+				t.Errorf("WithPickleMaxFileBytes(%d) effective = %d, want %d", tt.opt, got, tt.want)
+			}
+		})
+	}
+}
