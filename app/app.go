@@ -31,6 +31,14 @@ type AppInterface interface {
 	GetNetProbe() providers.NetProbe
 	GetSuppressor() providers.Suppressor
 
+	// AIBOM providers (v0.4)
+	GetPickleAnalyzer() providers.PickleAnalyzer
+	GetONNXValidator() providers.ONNXValidator
+	GetSafetensorsValidator() providers.SafetensorsValidator
+	GetModelCardChecker() providers.ModelCardChecker
+	GetSignatureVerifier() providers.SignatureVerifier
+	GetAIBOMComposer() providers.AIBOMComposer
+
 	// Init steps
 	InitProviders() error
 	InitEngines() error
@@ -54,6 +62,16 @@ type App struct {
 	resolver     providers.Resolver
 	netProbe     providers.NetProbe
 	suppressor   providers.Suppressor
+
+	// AIBOM sub-providers (v0.4) and the composer that fans out to them.
+	// Wired in InitProviders. Each is overridable via WithXxx so tests can
+	// inject mocks without touching the rest of the container.
+	pickleAnalyzer       providers.PickleAnalyzer
+	onnxValidator        providers.ONNXValidator
+	safetensorsValidator providers.SafetensorsValidator
+	modelCardChecker     providers.ModelCardChecker
+	signatureVerifier    providers.SignatureVerifier
+	aibomComposer        providers.AIBOMComposer
 
 	// Engines
 	scanner engines.ScannerEngine
@@ -105,6 +123,46 @@ func WithSuppressor(s providers.Suppressor) AppOption {
 
 func WithLogger(l *slog.Logger) AppOption {
 	return func(a *App) { a.Logger = l }
+}
+
+// ── AIBOM functional options (v0.4) ────────────────────────────────────────
+
+// WithPickleAnalyzerProvider injects a PickleAnalyzer. Named with the
+// "Provider" suffix to avoid colliding with providers.WithPickleAnalyzer
+// (the composer-level option) — both are valid identifiers in their own
+// packages but `WithPickleAnalyzer` would shadow at call sites that import
+// both, e.g. tests in cmd/.
+func WithPickleAnalyzerProvider(p providers.PickleAnalyzer) AppOption {
+	return func(a *App) { a.pickleAnalyzer = p }
+}
+
+// WithONNXValidatorProvider injects an ONNXValidator.
+func WithONNXValidatorProvider(o providers.ONNXValidator) AppOption {
+	return func(a *App) { a.onnxValidator = o }
+}
+
+// WithSafetensorsValidatorProvider injects a SafetensorsValidator.
+func WithSafetensorsValidatorProvider(s providers.SafetensorsValidator) AppOption {
+	return func(a *App) { a.safetensorsValidator = s }
+}
+
+// WithModelCardCheckerProvider injects a ModelCardChecker.
+func WithModelCardCheckerProvider(m providers.ModelCardChecker) AppOption {
+	return func(a *App) { a.modelCardChecker = m }
+}
+
+// WithSignatureVerifierProvider injects a SignatureVerifier.
+func WithSignatureVerifierProvider(s providers.SignatureVerifier) AppOption {
+	return func(a *App) { a.signatureVerifier = s }
+}
+
+// WithAIBOMComposer injects an AIBOMComposer. When supplied, the sub-
+// provider options above are still honoured for direct getter access (for
+// example a test that wants to assert the composer was constructed with a
+// specific PickleAnalyzer mock can inject both), but InitProviders will not
+// re-wrap the sub-providers into a fresh composer.
+func WithAIBOMComposer(c providers.AIBOMComposer) AppOption {
+	return func(a *App) { a.aibomComposer = c }
 }
 
 // NewApp creates a new App with the given config and options
@@ -183,6 +241,50 @@ func (a *App) InitProviders() error {
 	if a.suppressor == nil {
 		a.suppressor = providers.NewSuppressor()
 	}
+
+	// ── AIBOM sub-providers (v0.4) ──────────────────────────────────────────
+	//
+	// Each sub-provider follows the same lazy-init pattern as the MCP
+	// providers above: only create a default when the caller has not
+	// supplied one via a functional option. This lets tests stub out an
+	// individual analyzer without rewiring the whole container.
+	if a.pickleAnalyzer == nil {
+		var pickleOpts []providers.PickleAnalyzerOption
+		if a.Config != nil && a.Config.AIBOM.MaxPickleBytes > 0 {
+			pickleOpts = append(pickleOpts, providers.WithPickleMaxFileBytes(a.Config.AIBOM.MaxPickleBytes))
+		}
+		a.pickleAnalyzer = providers.NewPickleAnalyzer(pickleOpts...)
+	}
+	if a.onnxValidator == nil {
+		a.onnxValidator = providers.NewONNXValidator()
+	}
+	if a.safetensorsValidator == nil {
+		a.safetensorsValidator = providers.NewSafetensorsValidator()
+	}
+	if a.modelCardChecker == nil {
+		a.modelCardChecker = providers.NewModelCardChecker()
+	}
+	if a.signatureVerifier == nil {
+		var sigOpts []providers.SignatureVerifierOption
+		if a.Config != nil {
+			if len(a.Config.AIBOM.TrustedIssuers) > 0 {
+				sigOpts = append(sigOpts, providers.WithTrustedIssuers(a.Config.AIBOM.TrustedIssuers))
+			}
+			if len(a.Config.AIBOM.AdditionalTrustedIssuers) > 0 {
+				sigOpts = append(sigOpts, providers.WithAdditionalTrustedIssuers(a.Config.AIBOM.AdditionalTrustedIssuers))
+			}
+		}
+		a.signatureVerifier = providers.NewSignatureVerifier(sigOpts...)
+	}
+	if a.aibomComposer == nil {
+		a.aibomComposer = providers.NewComposer(
+			providers.WithPickleAnalyzer(a.pickleAnalyzer),
+			providers.WithONNXValidator(a.onnxValidator),
+			providers.WithSafetensorsValidator(a.safetensorsValidator),
+			providers.WithModelCardChecker(a.modelCardChecker),
+			providers.WithSignatureVerifier(a.signatureVerifier),
+		)
+	}
 	return nil
 }
 
@@ -199,6 +301,7 @@ func (a *App) InitEngines() error {
 			a.reporter,
 			a.suppressor,
 			a.netProbe,
+			a.aibomComposer,
 			a.Logger,
 		)
 	}
@@ -231,3 +334,16 @@ func (a *App) GetPinStore() providers.PinStore         { return a.pinStore }
 func (a *App) GetResolver() providers.Resolver         { return a.resolver }
 func (a *App) GetNetProbe() providers.NetProbe         { return a.netProbe }
 func (a *App) GetSuppressor() providers.Suppressor     { return a.suppressor }
+
+// AIBOM getters (v0.4) — each returns the wired sub-provider so tests and
+// integrations can assert / interact with them without reaching into App
+// fields directly.
+
+func (a *App) GetPickleAnalyzer() providers.PickleAnalyzer { return a.pickleAnalyzer }
+func (a *App) GetONNXValidator() providers.ONNXValidator   { return a.onnxValidator }
+func (a *App) GetSafetensorsValidator() providers.SafetensorsValidator {
+	return a.safetensorsValidator
+}
+func (a *App) GetModelCardChecker() providers.ModelCardChecker   { return a.modelCardChecker }
+func (a *App) GetSignatureVerifier() providers.SignatureVerifier { return a.signatureVerifier }
+func (a *App) GetAIBOMComposer() providers.AIBOMComposer         { return a.aibomComposer }

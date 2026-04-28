@@ -16,6 +16,18 @@ type ScanOptions struct {
 	SkipEgress   bool   // Skip network egress detection
 	ProbeNetwork bool   // Run runtime network probe after static scan
 	FailOn       string // Exit non-zero at this severity: critical, high, warning
+
+	// AIBOM sub-provider toggles. When set, findings produced by the
+	// matching sub-provider are dropped after the composer returns. The
+	// composer itself remains untouched — keeping skip behaviour purely
+	// at the engine layer mirrors how SkipSAST / SkipManifest are
+	// implemented for MCP scans and avoids re-wiring the composer per
+	// scan. See filterAIBOMFindings for the exact rule-prefix mapping.
+	SkipPickle      bool // Drop aibom-pickle-* findings
+	SkipONNX        bool // Drop aibom-onnx-* findings
+	SkipSafetensors bool // Drop aibom-safetensors-* findings
+	SkipModelCard   bool // Drop aibom-modelcard-* findings
+	SkipSignature   bool // Drop aibom-signature-* findings
 }
 
 // ScanReport holds the results of a scan
@@ -57,18 +69,26 @@ type ScannerEngine interface {
 }
 
 type scanner struct {
-	resolver     providers.Resolver
-	mcpClient    providers.MCPClient
-	ruleMatcher  providers.RuleMatcher
-	sastAnalyzer providers.SASTAnalyzer
-	depAuditor   providers.DepAuditor
-	hookAnalyzer providers.HookAnalyzer
-	reporter     providers.Reporter
-	suppressor   providers.Suppressor
-	netProbe     providers.NetProbe // optional — nil if not wired
-	logger       *slog.Logger
+	resolver      providers.Resolver
+	mcpClient     providers.MCPClient
+	ruleMatcher   providers.RuleMatcher
+	sastAnalyzer  providers.SASTAnalyzer
+	depAuditor    providers.DepAuditor
+	hookAnalyzer  providers.HookAnalyzer
+	reporter      providers.Reporter
+	suppressor    providers.Suppressor
+	netProbe      providers.NetProbe      // optional — nil if not wired
+	aibomComposer providers.AIBOMComposer // optional — nil falls back to MCP-only behaviour
+	logger        *slog.Logger
 }
 
+// NewScanner constructs the production ScannerEngine.
+//
+// The AIBOMComposer is optional: callers that build the engine without one
+// can still scan MCP servers, but model-artifact / model-directory targets
+// will surface a "no composer wired" error instead of a panic. App
+// container always wires the composer in InitEngines, so the nil branch
+// is reserved for unit tests that exercise the MCP-only flow.
 func NewScanner(
 	resolver providers.Resolver,
 	mcpClient providers.MCPClient,
@@ -79,19 +99,21 @@ func NewScanner(
 	reporter providers.Reporter,
 	suppressor providers.Suppressor,
 	netProbe providers.NetProbe,
+	aibomComposer providers.AIBOMComposer,
 	logger *slog.Logger,
 ) ScannerEngine {
 	return &scanner{
-		resolver:     resolver,
-		mcpClient:    mcpClient,
-		ruleMatcher:  ruleMatcher,
-		sastAnalyzer: sastAnalyzer,
-		depAuditor:   depAuditor,
-		hookAnalyzer: hookAnalyzer,
-		reporter:     reporter,
-		suppressor:   suppressor,
-		netProbe:     netProbe,
-		logger:       logger,
+		resolver:      resolver,
+		mcpClient:     mcpClient,
+		ruleMatcher:   ruleMatcher,
+		sastAnalyzer:  sastAnalyzer,
+		depAuditor:    depAuditor,
+		hookAnalyzer:  hookAnalyzer,
+		reporter:      reporter,
+		suppressor:    suppressor,
+		netProbe:      netProbe,
+		aibomComposer: aibomComposer,
+		logger:        logger,
 	}
 }
 
@@ -106,16 +128,14 @@ func (s *scanner) Scan(target string, opts ScanOptions) (*ScanReport, error) {
 	}
 	report.Package = pkg
 
-	// AIBOM dispatch is wired in Day 9 of the v0.4 milestone. The resolver
-	// already classifies model artifacts and directories, so we reject them
-	// here with a clear message rather than running MCP-server scanning over
-	// model weights (which would produce nonsense findings).
+	// AIBOM dispatch — model artifacts and model directories run through
+	// the AIBOMComposer instead of the MCP-server pipeline. MCP-server
+	// scanning over model weights would produce nonsense findings (every
+	// pickle byte sequence looks like a "command injection" to the SAST
+	// patterns), so we never fall through to the MCP path for these kinds.
 	switch pkg.Kind {
 	case providers.KindModelArtifact, providers.KindModelDirectory:
-		return nil, fmt.Errorf(
-			"AIBOM scanning of %s lands in v0.4 — wire-up coming Day 9 (path=%q)",
-			pkg.Kind, pkg.Path,
-		)
+		return s.scanModelArtifact(report, pkg, opts)
 	}
 
 	// Step 2: Static analysis on source code
@@ -247,6 +267,119 @@ func (s *scanner) Scan(target string, opts ScanOptions) (*ScanReport, error) {
 
 	s.logger.Info("scan complete", "findings", len(report.Findings))
 	return report, nil
+}
+
+// scanModelArtifact runs the AIBOM composer over a model artifact / model
+// directory target and applies the same suppression + report shape used by
+// MCP-server scans. Day 9 of the v0.4 AIBOM milestone — replaces the
+// pre-wire stub that returned a "wire-up coming" error.
+//
+// Path selection mirrors the resolver's contract:
+//
+//   - For KindModelArtifact, the resolver places the parent directory in
+//     pkg.Path and the absolute artifact filename in pkg.Args[0]. We hand
+//     the artifact path to the composer so it dispatches to a single
+//     sub-provider (no walk).
+//   - For KindModelDirectory, the resolver leaves pkg.Path pointing at the
+//     directory itself. The composer walks it, dispatches every recognised
+//     file, and runs cross-file aggregation (missing-card, signature
+//     verification per artifact).
+//
+// Skip-flag enforcement happens AFTER the composer returns: filterAIBOMFindings
+// drops findings whose Rule prefix matches a skipped sub-provider. That keeps
+// the composer untouched and matches how SkipSAST / SkipManifest are
+// implemented for MCP scans.
+//
+// The named return is load-bearing only insofar as suppression mutates
+// report.Findings via append — the function does not panic-recover, since
+// every sub-provider already wraps its own panics (Day 5 onnx, Day 6
+// modelcard, Day 7 signature).
+func (s *scanner) scanModelArtifact(report *ScanReport, pkg *providers.ResolvedPackage, opts ScanOptions) (*ScanReport, error) {
+	if s.aibomComposer == nil {
+		return nil, fmt.Errorf(
+			"no AIBOMComposer wired — cannot scan %s target %q (build the engine via app.NewApp so InitEngines wires the composer)",
+			pkg.Kind, pkg.Path,
+		)
+	}
+
+	target := pkg.Path
+	if pkg.Kind == providers.KindModelArtifact && len(pkg.Args) > 0 && pkg.Args[0] != "" {
+		// The resolver re-attaches the absolute artifact path to Args[0]
+		// for single-file targets. Prefer that over pkg.Path (which points
+		// at the parent directory) so the composer dispatches to one
+		// sub-provider rather than walking the whole directory.
+		target = pkg.Args[0]
+	}
+
+	s.logger.Info("running AIBOM composer", "target", target, "kind", pkg.Kind)
+	findings := s.aibomComposer.Scan(target)
+	s.logger.Info("AIBOM composer complete", "findings", len(findings))
+
+	findings = filterAIBOMFindings(findings, opts)
+	report.Findings = append(report.Findings, findings...)
+
+	// Apply suppression — same path as the MCP flow. The .oxvaultignore
+	// file is read from the artifact's directory so model authors can ship
+	// scoped suppressions next to their weights without touching their
+	// MCP server config.
+	if s.suppressor != nil && report.Package != nil {
+		ignoreDir := report.Package.Path
+		if err := s.suppressor.LoadIgnoreFile(ignoreDir); err != nil {
+			s.logger.Warn("could not load .oxvaultignore", "error", err)
+		}
+		kept, suppressed := s.suppressor.Filter(report.Findings)
+		report.Findings = kept
+		report.Suppressed = suppressed
+		s.logger.Info("suppression applied",
+			"kept", len(kept),
+			"suppressed", len(suppressed),
+		)
+	}
+
+	s.logger.Info("scan complete", "findings", len(report.Findings))
+	return report, nil
+}
+
+// filterAIBOMFindings drops findings produced by sub-providers the user
+// asked to skip. The mapping is by rule-id prefix:
+//
+//	aibom-pickle-*       → SkipPickle
+//	aibom-onnx-*         → SkipONNX
+//	aibom-safetensors-*  → SkipSafetensors
+//	aibom-modelcard-*    → SkipModelCard
+//	aibom-signature-*    → SkipSignature
+//
+// Findings that do not match any AIBOM prefix (e.g. aibom-clean,
+// aibom-unknown-format) are always preserved — skip flags only gate the
+// per-sub-provider rule families.
+func filterAIBOMFindings(findings []providers.Finding, opts ScanOptions) []providers.Finding {
+	if !opts.SkipPickle && !opts.SkipONNX && !opts.SkipSafetensors && !opts.SkipModelCard && !opts.SkipSignature {
+		return findings
+	}
+	out := make([]providers.Finding, 0, len(findings))
+	for _, f := range findings {
+		switch {
+		case opts.SkipPickle && hasPrefix(f.Rule, "aibom-pickle-"):
+			continue
+		case opts.SkipONNX && hasPrefix(f.Rule, "aibom-onnx-"):
+			continue
+		case opts.SkipSafetensors && hasPrefix(f.Rule, "aibom-safetensors-"):
+			continue
+		case opts.SkipModelCard && hasPrefix(f.Rule, "aibom-modelcard-"):
+			continue
+		case opts.SkipSignature && hasPrefix(f.Rule, "aibom-signature-"):
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+// hasPrefix is a tiny inlinable helper used by filterAIBOMFindings. We
+// intentionally avoid importing strings just for one HasPrefix call — keep
+// the engine package's import surface as narrow as possible.
+func hasPrefix(s, prefix string) bool {
+	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
 }
 
 // extractSchemaDescriptions walks a JSON Schema and extracts all description fields

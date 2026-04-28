@@ -12,6 +12,10 @@ import (
 )
 
 // newTestScanner wires up a scanner with the given mocks and a discard logger.
+//
+// AIBOM composer is left nil — these tests exercise the MCP-server flow,
+// which never reaches the composer dispatch. Tests that need an AIBOM
+// composer use newTestScannerWithComposer below.
 func newTestScanner(
 	resolver *testutil.MockResolver,
 	mcpClient *testutil.MockMCPClient,
@@ -23,7 +27,28 @@ func newTestScanner(
 	depAuditor := &testutil.MockDepAuditor{}
 	hookAnalyzer := &testutil.MockHookAnalyzer{}
 	suppressor := &testutil.MockSuppressor{}
-	return NewScanner(resolver, mcpClient, ruleMatcher, sast, depAuditor, hookAnalyzer, reporter, suppressor, nil, logger)
+	return NewScanner(resolver, mcpClient, ruleMatcher, sast, depAuditor, hookAnalyzer, reporter, suppressor, nil, nil, logger)
+}
+
+// newTestScannerWithComposer wires up a scanner with an AIBOMComposer mock
+// for Day 9 model-artifact dispatch tests. All other dependencies follow the
+// same defaults as newTestScanner.
+func newTestScannerWithComposer(
+	resolver *testutil.MockResolver,
+	composer *testutil.MockAIBOMComposer,
+	suppressor *testutil.MockSuppressor,
+) ScannerEngine {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	mcpClient := &testutil.MockMCPClient{}
+	ruleMatcher := &testutil.MockRuleMatcher{}
+	sast := &testutil.MockSASTAnalyzer{}
+	depAuditor := &testutil.MockDepAuditor{}
+	hookAnalyzer := &testutil.MockHookAnalyzer{}
+	reporter := &testutil.MockReporter{}
+	if suppressor == nil {
+		suppressor = &testutil.MockSuppressor{}
+	}
+	return NewScanner(resolver, mcpClient, ruleMatcher, sast, depAuditor, hookAnalyzer, reporter, suppressor, nil, composer, logger)
 }
 
 // defaultResolvedPackage returns a minimal ResolvedPackage used across tests.
@@ -65,44 +90,338 @@ func TestScanner_Scan_ResolveError(t *testing.T) {
 	}
 }
 
-// TestScanner_Scan_RejectsModelArtifactKind verifies that resolved packages
-// with PackageKind=KindModelArtifact / KindModelDirectory are rejected with
-// a clear "AIBOM scanning lands in v0.4 — wire-up coming Day 9" message.
-// MCP-server scanning over model weights would produce nonsense findings, so
-// the branch returns early before any sub-provider runs.
-func TestScanner_Scan_RejectsModelArtifactKind(t *testing.T) {
+// TestScanner_Scan_ModelArtifactKind_DispatchesToComposer verifies the Day 9
+// wiring: when the resolver classifies a target as KindModelArtifact or
+// KindModelDirectory, the scanner forwards it to the AIBOMComposer instead
+// of the MCP-server pipeline. The composer's findings flow through the
+// same suppression + report shape used by MCP scans.
+func TestScanner_Scan_ModelArtifactKind_DispatchesToComposer(t *testing.T) {
 	tests := []struct {
-		name string
-		kind providers.PackageKind
+		name        string
+		kind        providers.PackageKind
+		pkgPath     string
+		pkgArgs     []string
+		wantTarget  string
+		description string
 	}{
-		{"model artifact", providers.KindModelArtifact},
-		{"model directory", providers.KindModelDirectory},
+		{
+			name:        "single model artifact uses Args[0] as target",
+			kind:        providers.KindModelArtifact,
+			pkgPath:     "/tmp/models",
+			pkgArgs:     []string{"/tmp/models/weights.pkl"},
+			wantTarget:  "/tmp/models/weights.pkl",
+			description: "resolver places parent dir in Path and absolute file path in Args[0]",
+		},
+		{
+			name:        "model directory uses Path as target",
+			kind:        providers.KindModelDirectory,
+			pkgPath:     "/tmp/hf-cache/Llama",
+			pkgArgs:     nil,
+			wantTarget:  "/tmp/hf-cache/Llama",
+			description: "resolver leaves Path pointing at the directory itself",
+		},
+		{
+			name:        "single artifact with empty Args falls back to Path",
+			kind:        providers.KindModelArtifact,
+			pkgPath:     "/tmp/some-dir",
+			pkgArgs:     []string{},
+			wantTarget:  "/tmp/some-dir",
+			description: "robustness: resolver might omit Args under unusual circumstances",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			pkg := &providers.ResolvedPackage{
-				Path: "/tmp/weights.pkl",
+				Path: tt.pkgPath,
+				Args: tt.pkgArgs,
 				Kind: tt.kind,
-				Name: "weights.pkl",
+				Name: "test-model",
 			}
 			resolver := &testutil.MockResolver{ResolveResult: pkg}
-			sast := &testutil.MockSASTAnalyzer{}
-			eng := newTestScanner(resolver, &testutil.MockMCPClient{},
-				&testutil.MockRuleMatcher{}, sast, &testutil.MockReporter{})
+			composer := &testutil.MockAIBOMComposer{
+				ScanResult: []providers.Finding{
+					{Rule: "aibom-pickle-dangerous-global", Severity: providers.SeverityCritical, Message: "os.system reference"},
+				},
+			}
 
-			_, err := eng.Scan("/tmp/weights.pkl", ScanOptions{})
-			if err == nil {
-				t.Fatal("expected error for model artifact kind, got nil")
+			eng := newTestScannerWithComposer(resolver, composer, nil)
+			report, err := eng.Scan("./input", ScanOptions{})
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
 			}
-			if got := err.Error(); !strings.Contains(got, "AIBOM") || !strings.Contains(got, "Day 9") {
-				t.Errorf("expected AIBOM/Day 9 in error message, got: %v", err)
+			if composer.ScanCount.Load() != 1 {
+				t.Errorf("expected 1 composer.Scan call, got %d", composer.ScanCount.Load())
 			}
-			if sast.AnalyzeDirectoryCount.Load() != 0 {
-				t.Errorf("SAST must not run for model artifacts, got %d calls",
-					sast.AnalyzeDirectoryCount.Load())
+			if composer.LastPath != tt.wantTarget {
+				t.Errorf("expected composer.Scan called with %q, got %q", tt.wantTarget, composer.LastPath)
+			}
+			if len(report.Findings) != 1 {
+				t.Fatalf("expected 1 finding from composer, got %d", len(report.Findings))
+			}
+			if report.Findings[0].Rule != "aibom-pickle-dangerous-global" {
+				t.Errorf("expected aibom-pickle-dangerous-global, got %q", report.Findings[0].Rule)
 			}
 		})
+	}
+}
+
+// TestScanner_Scan_ModelArtifact_NoMCPSidePipeline verifies that AIBOM
+// dispatch returns BEFORE any MCP-side analyzer runs. SAST patterns over
+// pickle bytes would produce nonsense findings, so the early return is
+// load-bearing for output quality, not just performance.
+func TestScanner_Scan_ModelArtifact_NoMCPSidePipeline(t *testing.T) {
+	pkg := &providers.ResolvedPackage{
+		Path: "/tmp/models",
+		Args: []string{"/tmp/models/weights.pkl"},
+		Kind: providers.KindModelArtifact,
+	}
+	resolver := &testutil.MockResolver{ResolveResult: pkg}
+	composer := &testutil.MockAIBOMComposer{}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	mcpClient := &testutil.MockMCPClient{}
+	ruleMatcher := &testutil.MockRuleMatcher{}
+	sast := &testutil.MockSASTAnalyzer{}
+	depAuditor := &testutil.MockDepAuditor{}
+	hookAnalyzer := &testutil.MockHookAnalyzer{}
+	reporter := &testutil.MockReporter{}
+	suppressor := &testutil.MockSuppressor{}
+	eng := NewScanner(resolver, mcpClient, ruleMatcher, sast, depAuditor, hookAnalyzer, reporter, suppressor, nil, composer, logger)
+
+	_, err := eng.Scan("/tmp/models/weights.pkl", ScanOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if sast.AnalyzeDirectoryCount.Load() != 0 {
+		t.Errorf("SAST AnalyzeDirectory must not run for model artifacts, got %d calls", sast.AnalyzeDirectoryCount.Load())
+	}
+	if sast.DetectEgressCount.Load() != 0 {
+		t.Errorf("SAST DetectEgress must not run for model artifacts, got %d calls", sast.DetectEgressCount.Load())
+	}
+	if depAuditor.CallCount.Load() != 0 {
+		t.Errorf("DepAuditor must not run for model artifacts, got %d calls", depAuditor.CallCount.Load())
+	}
+	if hookAnalyzer.CallCount.Load() != 0 {
+		t.Errorf("HookAnalyzer must not run for model artifacts, got %d calls", hookAnalyzer.CallCount.Load())
+	}
+	if mcpClient.ConnectCount.Load() != 0 {
+		t.Errorf("MCPClient.Connect must not run for model artifacts, got %d calls", mcpClient.ConnectCount.Load())
+	}
+}
+
+// TestScanner_Scan_ModelArtifact_NoComposer_Errors verifies that scanning a
+// model artifact without a wired composer returns a descriptive error
+// instead of panicking on a nil pointer dereference. App always wires the
+// composer in InitEngines, so the nil branch is reserved for unit tests
+// that exercise the MCP-only flow.
+func TestScanner_Scan_ModelArtifact_NoComposer_Errors(t *testing.T) {
+	pkg := &providers.ResolvedPackage{
+		Path: "/tmp/models",
+		Args: []string{"/tmp/models/weights.pkl"},
+		Kind: providers.KindModelArtifact,
+	}
+	resolver := &testutil.MockResolver{ResolveResult: pkg}
+	// newTestScanner builds a scanner with composer=nil
+	eng := newTestScanner(resolver, &testutil.MockMCPClient{},
+		&testutil.MockRuleMatcher{}, &testutil.MockSASTAnalyzer{}, &testutil.MockReporter{})
+
+	_, err := eng.Scan("/tmp/models/weights.pkl", ScanOptions{})
+	if err == nil {
+		t.Fatal("expected error when composer is nil")
+	}
+	if got := err.Error(); !strings.Contains(got, "AIBOMComposer") {
+		t.Errorf("expected error to mention AIBOMComposer, got: %v", err)
+	}
+}
+
+// TestScanner_Scan_ModelArtifact_SkipFlags verifies that the AIBOM skip
+// flags drop findings produced by the matching sub-provider after the
+// composer returns. Each rule-prefix family is gated independently.
+func TestScanner_Scan_ModelArtifact_SkipFlags(t *testing.T) {
+	allFindings := []providers.Finding{
+		{Rule: "aibom-pickle-dangerous-global", Severity: providers.SeverityCritical},
+		{Rule: "aibom-onnx-custom-domain", Severity: providers.SeverityWarning},
+		{Rule: "aibom-safetensors-malformed-header", Severity: providers.SeverityWarning},
+		{Rule: "aibom-modelcard-no-license", Severity: providers.SeverityWarning},
+		{Rule: "aibom-signature-missing", Severity: providers.SeverityWarning},
+	}
+
+	tests := []struct {
+		name      string
+		opts      ScanOptions
+		wantRules []string
+	}{
+		{
+			name: "no skip flags keeps all findings",
+			opts: ScanOptions{},
+			wantRules: []string{
+				"aibom-pickle-dangerous-global",
+				"aibom-onnx-custom-domain",
+				"aibom-safetensors-malformed-header",
+				"aibom-modelcard-no-license",
+				"aibom-signature-missing",
+			},
+		},
+		{
+			name: "SkipPickle drops only pickle findings",
+			opts: ScanOptions{SkipPickle: true},
+			wantRules: []string{
+				"aibom-onnx-custom-domain",
+				"aibom-safetensors-malformed-header",
+				"aibom-modelcard-no-license",
+				"aibom-signature-missing",
+			},
+		},
+		{
+			name: "SkipONNX drops only ONNX findings",
+			opts: ScanOptions{SkipONNX: true},
+			wantRules: []string{
+				"aibom-pickle-dangerous-global",
+				"aibom-safetensors-malformed-header",
+				"aibom-modelcard-no-license",
+				"aibom-signature-missing",
+			},
+		},
+		{
+			name: "SkipSafetensors drops only safetensors findings",
+			opts: ScanOptions{SkipSafetensors: true},
+			wantRules: []string{
+				"aibom-pickle-dangerous-global",
+				"aibom-onnx-custom-domain",
+				"aibom-modelcard-no-license",
+				"aibom-signature-missing",
+			},
+		},
+		{
+			name: "SkipModelCard drops only modelcard findings",
+			opts: ScanOptions{SkipModelCard: true},
+			wantRules: []string{
+				"aibom-pickle-dangerous-global",
+				"aibom-onnx-custom-domain",
+				"aibom-safetensors-malformed-header",
+				"aibom-signature-missing",
+			},
+		},
+		{
+			name: "SkipSignature drops only signature findings",
+			opts: ScanOptions{SkipSignature: true},
+			wantRules: []string{
+				"aibom-pickle-dangerous-global",
+				"aibom-onnx-custom-domain",
+				"aibom-safetensors-malformed-header",
+				"aibom-modelcard-no-license",
+			},
+		},
+		{
+			name:      "all skip flags drop everything",
+			opts:      ScanOptions{SkipPickle: true, SkipONNX: true, SkipSafetensors: true, SkipModelCard: true, SkipSignature: true},
+			wantRules: []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pkg := &providers.ResolvedPackage{
+				Path: "/tmp/model-dir",
+				Kind: providers.KindModelDirectory,
+			}
+			resolver := &testutil.MockResolver{ResolveResult: pkg}
+			composer := &testutil.MockAIBOMComposer{ScanResult: allFindings}
+
+			eng := newTestScannerWithComposer(resolver, composer, nil)
+			report, err := eng.Scan("./model-dir", tt.opts)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if len(report.Findings) != len(tt.wantRules) {
+				t.Fatalf("expected %d findings, got %d (%v)", len(tt.wantRules), len(report.Findings), report.Findings)
+			}
+			gotRules := make(map[string]bool, len(report.Findings))
+			for _, f := range report.Findings {
+				gotRules[f.Rule] = true
+			}
+			for _, want := range tt.wantRules {
+				if !gotRules[want] {
+					t.Errorf("expected rule %q in findings, got %v", want, report.Findings)
+				}
+			}
+		})
+	}
+}
+
+// TestScanner_Scan_ModelDirectory_HFTarget verifies that the HF resolver's
+// output (Kind=KindModelDirectory, Path pointing at the cache directory)
+// dispatches through the composer. Mirrors what `oxvault scan hf:org/model`
+// looks like end-to-end once the resolver returns.
+func TestScanner_Scan_ModelDirectory_HFTarget(t *testing.T) {
+	pkg := &providers.ResolvedPackage{
+		Path: "/home/u/.cache/oxvault/hf/microsoft__phi-3__main",
+		Kind: providers.KindModelDirectory,
+		Name: "phi-3",
+	}
+	resolver := &testutil.MockResolver{ResolveResult: pkg}
+	composer := &testutil.MockAIBOMComposer{
+		ScanResult: []providers.Finding{
+			{Rule: "aibom-modelcard-clean", Severity: providers.SeverityInfo},
+		},
+	}
+
+	eng := newTestScannerWithComposer(resolver, composer, nil)
+	report, err := eng.Scan("hf:microsoft/phi-3", ScanOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if composer.LastPath != pkg.Path {
+		t.Errorf("expected composer to receive the cache directory %q, got %q", pkg.Path, composer.LastPath)
+	}
+	if len(report.Findings) != 1 || report.Findings[0].Rule != "aibom-modelcard-clean" {
+		t.Errorf("expected 1 modelcard-clean finding, got %v", report.Findings)
+	}
+}
+
+// TestScanner_Scan_ModelArtifact_SuppressionApplied verifies that the
+// suppressor is invoked for AIBOM scans the same way it is for MCP scans.
+// Without this, .oxvaultignore rules would silently be ignored on
+// model-artifact targets — a regression on the suppression contract.
+func TestScanner_Scan_ModelArtifact_SuppressionApplied(t *testing.T) {
+	pkg := &providers.ResolvedPackage{
+		Path: "/tmp/model-dir",
+		Kind: providers.KindModelDirectory,
+	}
+	resolver := &testutil.MockResolver{ResolveResult: pkg}
+
+	keptFinding := providers.Finding{Rule: "aibom-pickle-dangerous-global", Severity: providers.SeverityCritical}
+	suppressedFinding := providers.Finding{Rule: "aibom-modelcard-no-license", Severity: providers.SeverityWarning}
+
+	composer := &testutil.MockAIBOMComposer{
+		ScanResult: []providers.Finding{keptFinding, suppressedFinding},
+	}
+	suppressor := &testutil.MockSuppressor{
+		FilterKept:       []providers.Finding{keptFinding},
+		FilterSuppressed: []providers.Finding{suppressedFinding},
+	}
+
+	eng := newTestScannerWithComposer(resolver, composer, suppressor)
+	report, err := eng.Scan("./model-dir", ScanOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if suppressor.LoadCount.Load() != 1 {
+		t.Errorf("expected LoadIgnoreFile to be called once, got %d", suppressor.LoadCount.Load())
+	}
+	if suppressor.FilterCount.Load() != 1 {
+		t.Errorf("expected Filter to be called once, got %d", suppressor.FilterCount.Load())
+	}
+	if len(report.Findings) != 1 || report.Findings[0].Rule != "aibom-pickle-dangerous-global" {
+		t.Errorf("expected 1 kept finding, got %v", report.Findings)
+	}
+	if len(report.Suppressed) != 1 || report.Suppressed[0].Rule != "aibom-modelcard-no-license" {
+		t.Errorf("expected 1 suppressed finding, got %v", report.Suppressed)
 	}
 }
 
@@ -793,7 +1112,7 @@ func newTestScannerWithProbe(
 	depAuditor := &testutil.MockDepAuditor{}
 	hookAnalyzer := &testutil.MockHookAnalyzer{}
 	suppressor := &testutil.MockSuppressor{}
-	return NewScanner(resolver, mcpClient, ruleMatcher, sast, depAuditor, hookAnalyzer, reporter, suppressor, probe, logger)
+	return NewScanner(resolver, mcpClient, ruleMatcher, sast, depAuditor, hookAnalyzer, reporter, suppressor, probe, nil, logger)
 }
 
 func TestScanner_ProbeNetwork_CallsProbe(t *testing.T) {
