@@ -116,14 +116,19 @@ func DetectArtifactFormat(path string) ArtifactFormat {
 		return FormatSignature
 	}
 
-	// Extensionless or ambiguous: fall back to magic bytes.
+	// Magic-byte fallback ONLY for files without an extension. Files with a
+	// non-artifact extension (.json, .yaml, .txt, etc.) must NOT be reclassified
+	// as safetensors / pickle / onnx — leading '{' would otherwise misroute
+	// every JSON file into the safetensors validator (regression caught in HF
+	// resolver smoke testing — config.json was firing header-overflow because
+	// its first 8 bytes formed a uint64 larger than the file).
+	if ext != "" {
+		return FormatUnknown
+	}
 	switch {
 	case hasMagicPrefix(path, pickleMagic):
 		return FormatPickle
 	case hasMagicPrefix(path, safetensorsMagic):
-		// A leading '{' is also valid JSON — but in the AIBOM context this is
-		// a strong hint of a safetensors header. Real validation happens in
-		// SafetensorsValidator (Day 4).
 		return FormatSafetensors
 	case hasMagicPrefix(path, onnxMagic):
 		return FormatONNX
