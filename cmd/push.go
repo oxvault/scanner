@@ -24,10 +24,11 @@ import (
 // Mint one in the console at /settings/api-keys.
 func newPushCmd() *cobra.Command {
 	var (
-		apiKey  string
-		apiURL  string
-		scanFile string
-		quiet   bool
+		apiKey     string
+		apiURL     string
+		consoleURL string
+		scanFile   string
+		quiet      bool
 	)
 
 	cmd := &cobra.Command{
@@ -64,6 +65,13 @@ Authentication uses a workspace-scoped API key — mint one in the Console at
 				apiURL = "https://platform.oxvault.dev"
 			}
 
+			if consoleURL == "" {
+				consoleURL = os.Getenv("OXVAULT_CONSOLE_URL")
+			}
+			if consoleURL == "" {
+				consoleURL = deriveConsoleURL(apiURL)
+			}
+
 			scan, err := loadScanFile(scanFile)
 			if err != nil {
 				return err
@@ -72,16 +80,45 @@ Authentication uses a workspace-scoped API key — mint one in the Console at
 				return fmt.Errorf("no scan to push — run 'oxvault scan <target>' first")
 			}
 
-			return doPush(apiURL, apiKey, scan, quiet)
+			return doPush(apiURL, consoleURL, apiKey, scan, quiet)
 		},
 	}
 
 	cmd.Flags().StringVar(&apiKey, "api-key", "", "Workspace API key (default: $OXVAULT_API_KEY)")
 	cmd.Flags().StringVar(&apiURL, "api-url", "", "Platform base URL (default: $OXVAULT_API_URL or https://platform.oxvault.dev)")
+	cmd.Flags().StringVar(&consoleURL, "console-url", "", "Console base URL for the success link (default: $OXVAULT_CONSOLE_URL or derived from --api-url)")
 	cmd.Flags().StringVar(&scanFile, "scan-file", "", "Path to a saved scan JSON (default: ~/.oxvault/last-scan.json)")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Suppress the success banner")
 
 	return cmd
+}
+
+// deriveConsoleURL turns an API URL into a best-guess console URL for the
+// success banner. Honors $OXVAULT_CONSOLE_URL / --console-url first; this
+// is only the fallback when neither is set.
+//
+// Heuristics:
+//   - localhost / 127.0.0.1 → swap port to 5173 (Vite default)
+//   - "platform.<host>"      → "console.<host>"
+//   - everything else        → return apiURL unchanged
+func deriveConsoleURL(apiURL string) string {
+	parsed, err := url.Parse(apiURL)
+	if err != nil || parsed.Host == "" {
+		return apiURL
+	}
+
+	host := parsed.Hostname()
+	if host == "localhost" || host == "127.0.0.1" {
+		parsed.Host = host + ":5173"
+		return parsed.String()
+	}
+
+	if strings.HasPrefix(host, "platform.") {
+		parsed.Host = "console." + strings.TrimPrefix(host, "platform.")
+		return parsed.String()
+	}
+
+	return apiURL
 }
 
 func loadScanFile(override string) (*lastscan.File, error) {
@@ -108,7 +145,7 @@ type pushResponse struct {
 	CreatedAt  string `json:"created_at"`
 }
 
-func doPush(apiURL, apiKey string, scan *lastscan.File, quiet bool) error {
+func doPush(apiURL, consoleURL, apiKey string, scan *lastscan.File, quiet bool) error {
 	body, err := json.Marshal(scan)
 	if err != nil {
 		return fmt.Errorf("marshal scan: %w", err)
@@ -150,7 +187,7 @@ func doPush(apiURL, apiKey string, scan *lastscan.File, quiet bool) error {
 	}
 
 	if !quiet {
-		printPushSuccess(apiURL, scan, &pr)
+		printPushSuccess(consoleURL, scan, &pr)
 	}
 	return nil
 }
@@ -173,7 +210,7 @@ func snippet(b []byte, n int) string {
 	return string(b[:n]) + "…"
 }
 
-func printPushSuccess(apiURL string, scan *lastscan.File, resp *pushResponse) {
+func printPushSuccess(consoleURL string, scan *lastscan.File, resp *pushResponse) {
 	bold := color.New(color.Bold)
 	dim := color.New(color.Faint)
 	emerald := color.New(color.FgGreen, color.Bold)
@@ -183,11 +220,10 @@ func printPushSuccess(apiURL string, scan *lastscan.File, resp *pushResponse) {
 		bold.Sprintf("Pushed %d findings for %s", len(scan.Findings), scan.ArtifactName),
 	)
 
-	consoleURL := strings.Replace(apiURL, "platform.", "console.", 1)
 	if resp.ArtifactID != "" {
 		fmt.Fprintf(os.Stderr, "  %s %s/inventory/%s\n",
 			dim.Sprint("View:"),
-			consoleURL,
+			strings.TrimSuffix(consoleURL, "/"),
 			resp.ArtifactID,
 		)
 	}
