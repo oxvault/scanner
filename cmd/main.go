@@ -3,16 +3,52 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/fatih/color"
 	"github.com/oxvault/scanner/app"
 	"github.com/oxvault/scanner/config"
 	"github.com/oxvault/scanner/engines"
+	"github.com/oxvault/scanner/internal/lastscan"
 	iversion "github.com/oxvault/scanner/internal/version"
 	"github.com/oxvault/scanner/providers"
 	"github.com/spf13/cobra"
 )
+
+// persistLastScan saves the most recent scan to ~/.oxvault/last-scan.json so
+// `oxvault push` can upload it without re-running. Best-effort.
+func persistLastScan(target string, report *engines.ScanReport, started, completed time.Time) error {
+	artifactName := deriveArtifactName(target)
+	artifactType := "mcp" // TODO: derive from resolver kind once Package is on report
+	if report.Package != nil {
+		// e.g. KindModelArtifact / KindModelDirectory → "model"
+		switch fmt.Sprintf("%v", report.Package.Kind) {
+		case "model_artifact", "model_directory":
+			artifactType = "model"
+		case "rag_corpus":
+			artifactType = "rag"
+		}
+	}
+	f := lastscan.FromReport(target, artifactName, artifactType, started, completed, version, report.Findings)
+	return lastscan.Save(f)
+}
+
+// deriveArtifactName turns a scan target ("./node_modules/asana-mcp",
+// "@company/mcp-server", "github:user/repo") into a stable display name used
+// as the (workspace_id, name) upsert key on the platform.
+func deriveArtifactName(target string) string {
+	t := strings.TrimSpace(target)
+	switch {
+	case strings.HasPrefix(t, "github:"):
+		return strings.TrimPrefix(t, "github:")
+	case strings.HasPrefix(t, "@") || strings.HasPrefix(t, "hf:"):
+		return t
+	default:
+		return filepath.Base(filepath.Clean(t))
+	}
+}
 
 // version defaults to the canonical version from internal/version but can be
 // overridden via ldflags:
@@ -35,6 +71,7 @@ func main() {
 		newScanCmd(),
 		newPinCmd(),
 		newCheckCmd(),
+		newPushCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
@@ -332,12 +369,20 @@ func runSingleScan(application *app.App, cfg *config.Config, opts engines.ScanOp
 		fmt.Fprintln(os.Stderr)
 	}
 
+	startedAt := time.Now().UTC()
 	report, err := application.GetScanner().Scan(target, opts)
 	if err != nil {
 		return fmt.Errorf("scan: %w", err)
 	}
+	completedAt := time.Now().UTC()
 
 	report.Findings = filterByConfidence(report.Findings, minConf)
+
+	// Persist for `oxvault push`. Best-effort — failure to write the cache
+	// must not fail the scan itself.
+	if perr := persistLastScan(target, report, startedAt, completedAt); perr != nil {
+		fmt.Fprintf(os.Stderr, "  %s\n", color.New(color.Faint).Sprintf("(warning: could not persist last scan: %v)", perr))
+	}
 
 	output, err := application.GetReporter().Report(report.Findings, cfg.OutputFormat)
 	if err != nil {
