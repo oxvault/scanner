@@ -3,16 +3,53 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/fatih/color"
 	"github.com/oxvault/scanner/app"
 	"github.com/oxvault/scanner/config"
 	"github.com/oxvault/scanner/engines"
+	"github.com/oxvault/scanner/internal/lastscan"
+	"github.com/oxvault/scanner/internal/userconfig"
 	iversion "github.com/oxvault/scanner/internal/version"
 	"github.com/oxvault/scanner/providers"
 	"github.com/spf13/cobra"
 )
+
+// persistLastScan saves the most recent scan to ~/.oxvault/last-scan.json so
+// `oxvault push` can upload it without re-running. Best-effort.
+func persistLastScan(target string, report *engines.ScanReport, started, completed time.Time) error {
+	artifactName := deriveArtifactName(target)
+	artifactType := "mcp" // TODO: derive from resolver kind once Package is on report
+	if report.Package != nil {
+		// e.g. KindModelArtifact / KindModelDirectory → "model"
+		switch fmt.Sprintf("%v", report.Package.Kind) {
+		case "model_artifact", "model_directory":
+			artifactType = "model"
+		case "rag_corpus":
+			artifactType = "rag"
+		}
+	}
+	f := lastscan.FromReport(target, artifactName, artifactType, started, completed, version, report.Findings)
+	return lastscan.Save(f)
+}
+
+// deriveArtifactName turns a scan target ("./node_modules/asana-mcp",
+// "@company/mcp-server", "github:user/repo") into a stable display name used
+// as the (workspace_id, name) upsert key on the platform.
+func deriveArtifactName(target string) string {
+	t := strings.TrimSpace(target)
+	switch {
+	case strings.HasPrefix(t, "github:"):
+		return strings.TrimPrefix(t, "github:")
+	case strings.HasPrefix(t, "@") || strings.HasPrefix(t, "hf:"):
+		return t
+	default:
+		return filepath.Base(filepath.Clean(t))
+	}
+}
 
 // version defaults to the canonical version from internal/version but can be
 // overridden via ldflags:
@@ -35,6 +72,9 @@ func main() {
 		newScanCmd(),
 		newPinCmd(),
 		newCheckCmd(),
+		newPushCmd(),
+		newInitCmd(),
+		newAgentCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
@@ -134,9 +174,16 @@ func newScanCmd() *cobra.Command {
 		skipSignature   bool
 
 		// AIBOM tuning (v0.4)
-		maxPickleBytes            int64
-		trustedIssuersCSV         string
+		maxPickleBytes              int64
+		trustedIssuersCSV           string
 		additionalTrustedIssuersCSV string
+
+		// Push integration — auto-upload to the platform after the scan.
+		pushAfterScan  bool
+		pushAPIKey     string
+		pushAPIURL     string
+		pushConsoleURL string
+		pushQuiet      bool
 	)
 
 	cmd := &cobra.Command{
@@ -222,13 +269,36 @@ Config-based scanning:
 
 			minConf := parseMinConfidence(minConfidence)
 
+			pushOpts := pushOptions{
+				enabled:    pushAfterScan,
+				apiKey:     pushAPIKey,
+				apiURL:     pushAPIURL,
+				consoleURL: pushConsoleURL,
+				quiet:      pushQuiet,
+			}
+			// [push].auto in ~/.oxvault/config.toml flips --push on by default.
+			// An explicit --push=false on the command line still wins because
+			// it's already been parsed into pushAfterScan above; userconfig
+			// only fills in when the flag was left at its default.
+			//
+			// Auto-push is gated to terminal output mode so CI / scripted
+			// invocations (--format=json|sarif) keep stdout pure and don't
+			// accidentally upload scans against whatever API key is set in
+			// the runner's env. Pass --push explicitly to override.
+			isTerminalFormat := cfg.OutputFormat == providers.FormatTerminal
+			if !pushOpts.enabled && !cmd.Flags().Changed("push") && isTerminalFormat {
+				if uc, err := userconfig.Load(); err == nil && uc != nil && uc.Push.Auto {
+					pushOpts.enabled = true
+				}
+			}
+
 			// --config mode: scan all servers from one or more config files
 			if configPath != "" {
-				return runConfigScan(application, cfg, scanOpts, configPath, minConf)
+				return runConfigScan(application, cfg, scanOpts, configPath, minConf, pushOpts)
 			}
 
 			// Traditional single-target mode
-			return runSingleScan(application, cfg, scanOpts, args[0], minConf)
+			return runSingleScan(application, cfg, scanOpts, args[0], minConf, pushOpts)
 		},
 	}
 
@@ -266,6 +336,14 @@ Config-based scanning:
 	cmd.Flags().StringVar(&trustedIssuersCSV, "trusted-issuers", "", "Comma-separated OIDC issuer URLs that REPLACE the default trusted-issuer list for signature verification")
 	cmd.Flags().StringVar(&additionalTrustedIssuersCSV, "additional-trusted-issuers", "", "Comma-separated OIDC issuer URLs that MERGE into the default trusted-issuer list")
 
+	// Push integration — explicit opt-in to upload the scan to the Oxvault
+	// platform after a successful run. Free tier stays local-only.
+	cmd.Flags().BoolVar(&pushAfterScan, "push", false, "After the scan completes, upload the result to the Oxvault platform (requires OXVAULT_API_KEY)")
+	cmd.Flags().StringVar(&pushAPIKey, "api-key", "", "Workspace API key for --push (default: $OXVAULT_API_KEY)")
+	cmd.Flags().StringVar(&pushAPIURL, "api-url", "", "Platform base URL for --push (default: $OXVAULT_API_URL or https://platform.oxvault.dev)")
+	cmd.Flags().StringVar(&pushConsoleURL, "console-url", "", "Console base URL for the success link when --push is set")
+	cmd.Flags().BoolVar(&pushQuiet, "push-quiet", false, "Suppress the push success banner (only meaningful with --push)")
+
 	return cmd
 }
 
@@ -290,8 +368,34 @@ func splitAndTrimCSV(s string) []string {
 	return out
 }
 
+// pushOptions carries the post-scan upload flags through runSingleScan /
+// runConfigScan so each path can fire `oxvault push` without re-parsing
+// cobra flags.
+type pushOptions struct {
+	enabled    bool
+	apiKey     string
+	apiURL     string
+	consoleURL string
+	quiet      bool
+}
+
+// pushAfterPersist uploads the just-saved last-scan.json to the platform.
+// Called from the success paths of runSingleScan / runConfigScan when
+// --push was passed. Errors here surface but do not unwind the scan exit
+// code — the local result is still authoritative.
+func pushAfterPersist(opts pushOptions) error {
+	scan, err := lastscan.Load()
+	if err != nil {
+		return fmt.Errorf("read last-scan.json: %w", err)
+	}
+	if scan == nil {
+		return fmt.Errorf("no last scan on disk to push")
+	}
+	return runPushFlow(scan, opts.apiKey, opts.apiURL, opts.consoleURL, opts.quiet)
+}
+
 // runSingleScan handles the traditional `oxvault scan <target>` path.
-func runSingleScan(application *app.App, cfg *config.Config, opts engines.ScanOptions, target string, minConf providers.Confidence) error {
+func runSingleScan(application *app.App, cfg *config.Config, opts engines.ScanOptions, target string, minConf providers.Confidence, push pushOptions) error {
 	if cfg.OutputFormat == providers.FormatTerminal {
 		printBanner(target)
 
@@ -332,12 +436,20 @@ func runSingleScan(application *app.App, cfg *config.Config, opts engines.ScanOp
 		fmt.Fprintln(os.Stderr)
 	}
 
+	startedAt := time.Now().UTC()
 	report, err := application.GetScanner().Scan(target, opts)
 	if err != nil {
 		return fmt.Errorf("scan: %w", err)
 	}
+	completedAt := time.Now().UTC()
 
 	report.Findings = filterByConfidence(report.Findings, minConf)
+
+	// Persist for `oxvault push`. Best-effort — failure to write the cache
+	// must not fail the scan itself.
+	if perr := persistLastScan(target, report, startedAt, completedAt); perr != nil {
+		fmt.Fprintf(os.Stderr, "  %s\n", color.New(color.Faint).Sprintf("(warning: could not persist last scan: %v)", perr))
+	}
 
 	output, err := application.GetReporter().Report(report.Findings, cfg.OutputFormat)
 	if err != nil {
@@ -355,6 +467,17 @@ func runSingleScan(application *app.App, cfg *config.Config, opts engines.ScanOp
 	if len(report.Suppressed) > 0 && cfg.OutputFormat == providers.FormatTerminal {
 		dim := color.New(color.Faint)
 		fmt.Printf("  %s\n\n", dim.Sprintf("(%d suppressed — run with --show-suppressed to view)", len(report.Suppressed)))
+	}
+
+	// --push: upload the just-persisted scan to the platform. Done after
+	// terminal output so the user sees their findings first; failure here
+	// is surfaced but doesn't override the scan's own exit code.
+	if push.enabled {
+		if err := pushAfterPersist(push); err != nil {
+			fmt.Fprintf(os.Stderr, "  %s %s\n",
+				color.New(color.FgRed, color.Bold).Sprint("✗"),
+				fmt.Sprintf("push failed: %v", err))
+		}
 	}
 
 	if report.HasSeverity(cfg.FailOn) {
@@ -402,7 +525,7 @@ func printSuppressedSection(findings []providers.Finding) {
 // runConfigScan handles `oxvault scan --config <path|auto>`.
 // It discovers all configured MCP servers, scans each one individually,
 // and aggregates findings with per-server headers in terminal mode.
-func runConfigScan(application *app.App, cfg *config.Config, opts engines.ScanOptions, configPath string, minConf providers.Confidence) error {
+func runConfigScan(application *app.App, cfg *config.Config, opts engines.ScanOptions, configPath string, minConf providers.Confidence, push pushOptions) error {
 	result, err := config.Discover(configPath)
 	if err != nil {
 		return fmt.Errorf("discover config: %w", err)
@@ -435,6 +558,7 @@ func runConfigScan(application *app.App, cfg *config.Config, opts engines.ScanOp
 	anyFailed := false
 
 	for _, srv := range result.Servers {
+		startedAt := time.Now().UTC()
 		// Build the target string that the resolver understands.
 		// For config-defined servers the command IS the target — we pass it
 		// through as a synthetic "command:args" target and let the scanner
@@ -456,9 +580,22 @@ func runConfigScan(application *app.App, cfg *config.Config, opts engines.ScanOp
 			fmt.Fprintf(os.Stderr, "  scan error for %q: %v\n\n", srv.Name, scanErr)
 			continue
 		}
+		completedAt := time.Now().UTC()
 
 		// Filter by minimum confidence before reporting
 		report.Findings = filterByConfidence(report.Findings, minConf)
+
+		// --push: persist + upload this server's scan as its own artifact
+		// before moving on. Failures are surfaced but don't abort the loop.
+		if push.enabled {
+			if perr := persistLastScan(target, report, startedAt, completedAt); perr != nil {
+				fmt.Fprintf(os.Stderr, "  %s\n", color.New(color.Faint).Sprintf("(warning: persist last scan: %v)", perr))
+			} else if uerr := pushAfterPersist(push); uerr != nil {
+				fmt.Fprintf(os.Stderr, "  %s push failed for %q: %v\n",
+					color.New(color.FgRed, color.Bold).Sprint("✗"),
+					srv.Name, uerr)
+			}
+		}
 
 		// Tag every finding with the server name for aggregation display
 		for i := range report.Findings {
