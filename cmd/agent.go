@@ -76,19 +76,8 @@ Auth uses a workspace API key, same as 'oxvault push'.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			uc, _ := userconfig.Load()
 
-			if apiKey == "" {
-				apiKey = os.Getenv("OXVAULT_API_KEY")
-			}
-			if apiKey == "" && uc != nil {
-				apiKey = uc.Push.APIKey
-			}
-			if apiKey == "" {
-				return fmt.Errorf("OXVAULT_API_KEY not set; mint a key at <api-url>/settings/api-keys")
-			}
-			if !strings.HasPrefix(apiKey, "ox_") {
-				return fmt.Errorf("api key looks malformed (expected prefix \"ox_\"); refusing to start agent")
-			}
-
+			// Resolve URLs first so the missing-key error can point users
+			// at the right console URL instead of a placeholder.
 			if apiURL == "" {
 				apiURL = os.Getenv("OXVAULT_API_URL")
 			}
@@ -97,6 +86,22 @@ Auth uses a workspace API key, same as 'oxvault push'.`,
 			}
 			if apiURL == "" {
 				apiURL = "https://platform.oxvault.dev"
+			}
+
+			if apiKey == "" {
+				apiKey = os.Getenv("OXVAULT_API_KEY")
+			}
+			if apiKey == "" && uc != nil {
+				apiKey = uc.Push.APIKey
+			}
+			if apiKey == "" {
+				return fmt.Errorf(
+					"OXVAULT_API_KEY not set; mint a key at %s/settings/api-keys (or pass --api-key)",
+					strings.TrimSuffix(deriveConsoleURL(apiURL), "/"),
+				)
+			}
+			if !strings.HasPrefix(apiKey, "ox_") {
+				return fmt.Errorf("api key looks malformed (expected prefix \"ox_\"); refusing to start agent")
 			}
 
 			if consoleURL == "" {
@@ -200,7 +205,12 @@ func (a *agentLoop) run(ctx context.Context, oneShot bool) error {
 		logf.Info("claimed job %s for artifact %s", job.ID, job.ArtifactName)
 		if err := a.processJob(job, logf); err != nil {
 			logf.Warn("job %s failed: %v", job.ID, err)
-			a.complete(job.ID, nil, ptrString(err.Error()))
+			// Failure path also benefits from retry — otherwise a transient
+			// /complete blip on a failed scan leaves the job stuck claimed
+			// and the user has no audit trail of the failure.
+			if cerr := a.completeWithRetry(job.ID, nil, ptrString(err.Error()), logf); cerr != nil {
+				logf.Warn("job %s could not be marked failed after retries: %v", job.ID, cerr)
+			}
 		}
 
 		if oneShot {
@@ -299,8 +309,15 @@ func (a *agentLoop) processJob(job *pendingJob, logf *agentLogger) error {
 		return fmt.Errorf("push scan: %w", err)
 	}
 
-	if err := a.complete(job.ID, &scanID, nil); err != nil {
-		return fmt.Errorf("mark complete: %w", err)
+	// Once the scan is uploaded, the only way to clear the job from
+	// `claimed` state is the /complete call. Transient network errors
+	// here would orphan a real result. Retry with bounded backoff and
+	// surface a loud, recoverable error if every attempt fails.
+	if err := a.completeWithRetry(job.ID, &scanID, nil, logf); err != nil {
+		return fmt.Errorf(
+			"scan %s pushed for job %s but /complete failed (job stuck in claimed state — re-run manually): %w",
+			scanID, job.ID, err,
+		)
 	}
 	logf.Info("job %s done — scan %s · %d findings", job.ID, scanID, len(report.Findings))
 	return nil
@@ -330,6 +347,14 @@ func (a *agentLoop) resolveTarget(job *pendingJob) (string, error) {
 		job.ArtifactName = got
 	}
 
+	// Defence-in-depth: even though the platform should only emit safe
+	// names, treat the value as untrusted at this boundary. A malicious
+	// or compromised platform could otherwise drive the agent into
+	// scanning sensitive files outside cwd via "../../etc/shadow".
+	if err := validateArtifactName(name); err != nil {
+		return "", err
+	}
+
 	if t, ok := a.targets[name]; ok {
 		return t, nil
 	}
@@ -352,8 +377,29 @@ func (a *agentLoop) resolveTarget(job *pendingJob) (string, error) {
 	)
 }
 
+// validateArtifactName rejects names that could escape cwd when joined
+// to it (path traversal). The agent never trusts the platform's name
+// blindly — see resolveTarget. Tested with names from real CLI corpora
+// (mcp-server, @scope/pkg, hf:org/model resolved to "model").
+func validateArtifactName(name string) error {
+	if name == "" {
+		return fmt.Errorf("artifact name is empty")
+	}
+	if strings.HasPrefix(name, ".") {
+		return fmt.Errorf("artifact name %q starts with '.'", name)
+	}
+	if strings.ContainsAny(name, "/\\") {
+		return fmt.Errorf("artifact name %q contains path separator", name)
+	}
+	if strings.Contains(name, "..") {
+		return fmt.Errorf("artifact name %q contains '..'", name)
+	}
+	return nil
+}
+
 // candidatePaths builds the ordered list of paths the agent probes when
 // no explicit --target-map entry exists. Kept exported for tests.
+// Caller MUST pass a name validated via validateArtifactName.
 func candidatePaths(cwd, name string) []string {
 	sep := string(os.PathSeparator)
 	out := []string{
@@ -449,6 +495,30 @@ func (a *agentLoop) pushScan(f *lastscan.File) (string, error) {
 		return "", err
 	}
 	return env.Data.ID, nil
+}
+
+// completeWithRetry wraps `complete()` in 3 attempts with exponential
+// backoff (0s, 1s, 2s). Used after pushScan succeeds — losing this call
+// orphans a real scan result in the platform's `claimed` state, so we
+// burn budget here rather than leak the job. Each retry attempt is
+// logged at warn level so operators can see partial-failure trails.
+func (a *agentLoop) completeWithRetry(jobID string, scanID *string, errMsg *string, logf *agentLogger) error {
+	const attempts = 3
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		if i > 0 {
+			delay := time.Duration(1<<uint(i-1)) * time.Second
+			logf.Warn("job %s /complete attempt %d/%d failed: %v — retrying in %s",
+				jobID, i, attempts, lastErr, delay)
+			time.Sleep(delay)
+		}
+		if err := a.complete(jobID, scanID, errMsg); err != nil {
+			lastErr = err
+			continue
+		}
+		return nil
+	}
+	return lastErr
 }
 
 // complete tells the platform a job is done. scanID is set on success,

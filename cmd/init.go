@@ -41,10 +41,13 @@ OXVAULT_API_KEY).
 				return fmt.Errorf("%s already exists — pass --force to overwrite", path)
 			}
 
-			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			// Dir is 0700: only the owner can list it. The file itself is
+			// 0600 — users may put `[push].api_key = "ox_…"` here and we
+			// must not let other local accounts read the secret.
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 				return fmt.Errorf("create config dir: %w", err)
 			}
-			if err := os.WriteFile(path, []byte(starterConfig), 0o644); err != nil {
+			if err := os.WriteFile(path, []byte(starterConfig), 0o600); err != nil {
 				return fmt.Errorf("write config: %w", err)
 			}
 
@@ -69,9 +72,11 @@ const starterConfig = `# Oxvault CLI configuration
 # Requires OXVAULT_API_KEY (or [push].api_key below).
 # auto = true
 
-# api_key: workspace API key minted at /settings/api-keys.
-# Prefer OXVAULT_API_KEY env var so the file stays safe to commit. Anything
-# you do put here, do NOT check into a public repo.
+## api_key: workspace API key minted at /settings/api-keys.
+## This file is created with mode 0600 (owner read/write only) — other
+## users on the same machine cannot read it. Even so, prefer the
+## OXVAULT_API_KEY env var: env vars don't end up in dotfile backups,
+## directory listings, or accidental git commits.
 # api_key = "ox_..."
 
 # api_url: platform base URL. Defaults to https://platform.oxvault.dev.

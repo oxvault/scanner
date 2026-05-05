@@ -174,16 +174,16 @@ func newScanCmd() *cobra.Command {
 		skipSignature   bool
 
 		// AIBOM tuning (v0.4)
-		maxPickleBytes            int64
-		trustedIssuersCSV         string
+		maxPickleBytes              int64
+		trustedIssuersCSV           string
 		additionalTrustedIssuersCSV string
 
 		// Push integration — auto-upload to the platform after the scan.
-		pushAfterScan bool
-		pushAPIKey    string
-		pushAPIURL    string
+		pushAfterScan  bool
+		pushAPIKey     string
+		pushAPIURL     string
 		pushConsoleURL string
-		pushQuiet     bool
+		pushQuiet      bool
 	)
 
 	cmd := &cobra.Command{
