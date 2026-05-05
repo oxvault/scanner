@@ -13,6 +13,7 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/oxvault/scanner/internal/lastscan"
+	"github.com/oxvault/scanner/internal/userconfig"
 	"github.com/spf13/cobra"
 )
 
@@ -48,30 +49,6 @@ Authentication uses a workspace-scoped API key — mint one in the Console at
     oxvault push --api-key ox_… --api-url https://platform.oxvault.dev
     oxvault push --scan-file ./scan.json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if apiKey == "" {
-				apiKey = os.Getenv("OXVAULT_API_KEY")
-			}
-			if apiKey == "" {
-				return fmt.Errorf("OXVAULT_API_KEY not set; mint a key at <api-url>/settings/api-keys (or pass --api-key)")
-			}
-			if !strings.HasPrefix(apiKey, "ox_") {
-				return fmt.Errorf("api key looks malformed (expected prefix \"ox_\"); refusing to send")
-			}
-
-			if apiURL == "" {
-				apiURL = os.Getenv("OXVAULT_API_URL")
-			}
-			if apiURL == "" {
-				apiURL = "https://platform.oxvault.dev"
-			}
-
-			if consoleURL == "" {
-				consoleURL = os.Getenv("OXVAULT_CONSOLE_URL")
-			}
-			if consoleURL == "" {
-				consoleURL = deriveConsoleURL(apiURL)
-			}
-
 			scan, err := loadScanFile(scanFile)
 			if err != nil {
 				return err
@@ -79,8 +56,7 @@ Authentication uses a workspace-scoped API key — mint one in the Console at
 			if scan == nil {
 				return fmt.Errorf("no scan to push — run 'oxvault scan <target>' first")
 			}
-
-			return doPush(apiURL, consoleURL, apiKey, scan, quiet)
+			return runPushFlow(scan, apiKey, apiURL, consoleURL, quiet)
 		},
 	}
 
@@ -91,6 +67,53 @@ Authentication uses a workspace-scoped API key — mint one in the Console at
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Suppress the success banner")
 
 	return cmd
+}
+
+// runPushFlow is the shared upload pipeline used by both the standalone
+// `oxvault push` subcommand and `oxvault scan --push`. Resolves the api
+// key / urls in priority order: flag → env → ~/.oxvault/config.toml →
+// default, validates the key prefix, and dispatches to doPush.
+func runPushFlow(scan *lastscan.File, apiKey, apiURL, consoleURL string, quiet bool) error {
+	uc, _ := userconfig.Load() // missing/broken file is non-fatal — fall through to env/defaults
+
+	if apiKey == "" {
+		apiKey = os.Getenv("OXVAULT_API_KEY")
+	}
+	if apiKey == "" && uc != nil {
+		apiKey = uc.Push.APIKey
+	}
+	if apiKey == "" {
+		return fmt.Errorf("OXVAULT_API_KEY not set; mint a key at <api-url>/settings/api-keys (or pass --api-key, or set [push].api_key in ~/.oxvault/config.toml)")
+	}
+	if !strings.HasPrefix(apiKey, "ox_") {
+		return fmt.Errorf("api key looks malformed (expected prefix \"ox_\"); refusing to send")
+	}
+
+	if apiURL == "" {
+		apiURL = os.Getenv("OXVAULT_API_URL")
+	}
+	if apiURL == "" && uc != nil {
+		apiURL = uc.Push.APIURL
+	}
+	if apiURL == "" {
+		apiURL = "https://platform.oxvault.dev"
+	}
+
+	if consoleURL == "" {
+		consoleURL = os.Getenv("OXVAULT_CONSOLE_URL")
+	}
+	if consoleURL == "" && uc != nil {
+		consoleURL = uc.Push.ConsoleURL
+	}
+	if consoleURL == "" {
+		consoleURL = deriveConsoleURL(apiURL)
+	}
+
+	if !quiet && uc != nil && uc.Push.Quiet {
+		quiet = true
+	}
+
+	return doPush(apiURL, consoleURL, apiKey, scan, quiet)
 }
 
 // deriveConsoleURL turns an API URL into a best-guess console URL for the
