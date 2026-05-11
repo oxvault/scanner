@@ -22,13 +22,17 @@ import (
 // `oxvault push` can upload it without re-running. Best-effort.
 func persistLastScan(target string, report *engines.ScanReport, started, completed time.Time) error {
 	artifactName := deriveArtifactName(target)
-	artifactType := "mcp" // TODO: derive from resolver kind once Package is on report
+	artifactType := "mcp"
 	if report.Package != nil {
-		// e.g. KindModelArtifact / KindModelDirectory → "model"
-		switch fmt.Sprintf("%v", report.Package.Kind) {
-		case "model_artifact", "model_directory":
+		// Match against the typed PackageKind constants — comparing the
+		// stringified Kind to literals previously used underscores
+		// ("model_artifact") while the constants are hyphenated
+		// ("model-artifact"), so the switch never matched and every model
+		// / RAG artifact got tagged "mcp" on the dashboard.
+		switch report.Package.Kind {
+		case providers.KindModelArtifact, providers.KindModelDirectory:
 			artifactType = "model"
-		case "rag_corpus":
+		case providers.KindRAGCorpus:
 			artifactType = "rag"
 		}
 	}
