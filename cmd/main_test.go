@@ -3,7 +3,36 @@ package main
 import (
 	"reflect"
 	"testing"
+
+	"github.com/oxvault/scanner/providers"
 )
+
+// TestArtifactTypeFor pins the resolver-kind → dashboard-artifact-type
+// mapping. Regressions here ship as "every model tagged MCP on the
+// dashboard" — silent until someone notices the inventory list.
+func TestArtifactTypeFor(t *testing.T) {
+	tests := []struct {
+		name string
+		pkg  *providers.ResolvedPackage
+		want string
+	}{
+		{name: "nil package defaults to mcp", pkg: nil, want: "mcp"},
+		{name: "zero-value Kind defaults to mcp", pkg: &providers.ResolvedPackage{}, want: "mcp"},
+		{name: "explicit MCPServer", pkg: &providers.ResolvedPackage{Kind: providers.KindMCPServer}, want: "mcp"},
+		{name: "ModelArtifact (single file)", pkg: &providers.ResolvedPackage{Kind: providers.KindModelArtifact}, want: "model"},
+		{name: "ModelDirectory (HF download)", pkg: &providers.ResolvedPackage{Kind: providers.KindModelDirectory}, want: "model"},
+		{name: "RAGCorpus", pkg: &providers.ResolvedPackage{Kind: providers.KindRAGCorpus}, want: "rag"},
+		{name: "unknown future kind falls back to mcp", pkg: &providers.ResolvedPackage{Kind: providers.PackageKind("future-unknown")}, want: "mcp"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := artifactTypeFor(tt.pkg)
+			if got != tt.want {
+				t.Errorf("artifactTypeFor(%+v) = %q, want %q", tt.pkg, got, tt.want)
+			}
+		})
+	}
+}
 
 func TestSplitAndTrimCSV(t *testing.T) {
 	tests := []struct {
