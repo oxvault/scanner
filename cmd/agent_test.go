@@ -105,6 +105,15 @@ func TestIsRemoteSchemeTarget(t *testing.T) {
 		"server.v2",
 		"my_server",
 		"garbage.onnx", // file basename, no slash → local probe
+		// Malformed pseudo-schemes that the bare-form branch must NOT
+		// classify as remote (would otherwise get handed to the npm
+		// resolver and produce confusing errors).
+		":foo/bar",
+		"foo:/bar",
+		"foo/bar/baz",
+		"/foo/bar",
+		"foo/",
+		"/foo",
 	}
 	for _, n := range local {
 		if isRemoteSchemeTarget(n) {

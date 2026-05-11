@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -402,16 +403,17 @@ func isRemoteSchemeTarget(name string) bool {
 		strings.HasPrefix(name, "@") {
 		return true
 	}
-	// `org/pkg` is the npm bare-form for scoped-like names without `@`,
-	// e.g. `mcpotato/42-eicar-street`. Accept any single `/` not at edges.
-	if i := strings.Index(name, "/"); i > 0 && i < len(name)-1 && !strings.ContainsAny(name, "\\") {
-		// One slash only — keep the safety net tight.
-		if strings.Count(name, "/") == 1 {
-			return true
-		}
-	}
-	return false
+	// Bare-form `org/pkg` (e.g. `mcpotato/42-eicar-street`). Match the npm
+	// package naming charset on both sides of a single slash so malformed
+	// pseudo-schemes like `:foo/bar` or `foo/bar/baz` don't get classified
+	// as remote and incorrectly handed to the scanner's npm/HF resolver.
+	return barePackageRe.MatchString(name)
 }
+
+// barePackageRe matches `<segment>/<segment>` where each segment is one or
+// more npm-safe characters (alphanumeric, dot, underscore, hyphen). One
+// slash exactly, no leading/trailing slash, no colons or other weirdness.
+var barePackageRe = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`)
 
 // validateArtifactName rejects names that could escape cwd when joined
 // to it (path traversal). The agent never trusts the platform's name
