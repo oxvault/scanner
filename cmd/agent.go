@@ -295,11 +295,15 @@ func (a *agentLoop) processJob(job *pendingJob, logf *agentLogger) error {
 	completedAt := time.Now().UTC()
 
 	// Persist + push the scan via the same code path as `oxvault push`.
+	// Type comes from the resolver's PackageKind, NOT a hardcoded "mcp" —
+	// otherwise every model + RAG rescan gets re-tagged as MCP on the
+	// dashboard, undoing the fix for the same bug in persistLastScan.
 	artifactName := job.ArtifactName
 	if artifactName == "" {
 		artifactName = deriveArtifactName(target)
 	}
-	f := lastscan.FromReport(target, artifactName, "mcp", startedAt, completedAt, version, report.Findings)
+	artifactType := artifactTypeFor(report.Package)
+	f := lastscan.FromReport(target, artifactName, artifactType, startedAt, completedAt, version, report.Findings)
 	if err := lastscan.Save(f); err != nil {
 		return fmt.Errorf("persist last scan: %w", err)
 	}
