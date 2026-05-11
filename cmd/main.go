@@ -22,22 +22,32 @@ import (
 // `oxvault push` can upload it without re-running. Best-effort.
 func persistLastScan(target string, report *engines.ScanReport, started, completed time.Time) error {
 	artifactName := deriveArtifactName(target)
-	artifactType := "mcp"
-	if report.Package != nil {
-		// Match against the typed PackageKind constants — comparing the
-		// stringified Kind to literals previously used underscores
-		// ("model_artifact") while the constants are hyphenated
-		// ("model-artifact"), so the switch never matched and every model
-		// / RAG artifact got tagged "mcp" on the dashboard.
-		switch report.Package.Kind {
-		case providers.KindModelArtifact, providers.KindModelDirectory:
-			artifactType = "model"
-		case providers.KindRAGCorpus:
-			artifactType = "rag"
-		}
-	}
+	artifactType := artifactTypeFor(report.Package)
 	f := lastscan.FromReport(target, artifactName, artifactType, started, completed, version, report.Findings)
 	return lastscan.Save(f)
+}
+
+// artifactTypeFor maps the resolver's PackageKind onto the platform's
+// dashboard artifact_type ("mcp" / "model" / "rag"). A nil package or any
+// unrecognised kind defaults to "mcp" to preserve the historical behaviour
+// of the scanner (MCP was the only artifact class before v0.4).
+//
+// Earlier this lived inline in persistLastScan as a stringified switch on
+// hyphenated literals like "model-artifact" — but the typed constants are
+// what we actually care about, and the explicit default makes the
+// fallback intentional and testable.
+func artifactTypeFor(pkg *providers.ResolvedPackage) string {
+	if pkg == nil {
+		return "mcp"
+	}
+	switch pkg.Kind {
+	case providers.KindModelArtifact, providers.KindModelDirectory:
+		return "model"
+	case providers.KindRAGCorpus:
+		return "rag"
+	default:
+		return "mcp"
+	}
 }
 
 // deriveArtifactName turns a scan target ("./node_modules/asana-mcp",

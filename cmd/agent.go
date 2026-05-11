@@ -252,7 +252,7 @@ func (a *agentLoop) poll() (*pendingJob, error) {
 	if err != nil {
 		return nil, fmt.Errorf("poll: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
 
 	switch resp.StatusCode {
@@ -371,8 +371,8 @@ func (a *agentLoop) resolveTarget(job *pendingJob) (string, error) {
 		}
 	}
 	return "", fmt.Errorf(
-		"could not locate artifact %q under %s (tried %d paths). "+
-			"Pass --target-map=%s=<path> to point the agent explicitly.",
+		"could not locate artifact %q under %s (tried %d paths); "+
+			"pass --target-map=%s=<path> to point the agent explicitly",
 		name, cwd, len(candidates), name,
 	)
 }
@@ -439,7 +439,7 @@ func (a *agentLoop) fetchArtifactName(artifactID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("artifact lookup %d: %s", resp.StatusCode, snippet(body, 256))
@@ -481,7 +481,7 @@ func (a *agentLoop) pushScan(f *lastscan.File) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("push %d: %s", resp.StatusCode, snippet(respBody, 256))
@@ -544,7 +544,7 @@ func (a *agentLoop) complete(jobID string, scanID *string, errMsg *string) error
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("complete %d: %s", resp.StatusCode, snippet(respBody, 256))
