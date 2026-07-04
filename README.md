@@ -9,8 +9,9 @@
 [![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go)](https://go.dev)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue)](LICENSE)
 [![CI](https://github.com/oxvault/scanner/actions/workflows/go-test.yml/badge.svg)](https://github.com/oxvault/scanner/actions/workflows/go-test.yml)
-[![CVE Detection](https://img.shields.io/badge/CVE_Detection-12%2F12-brightgreen)](testdata/cve/)
-[![FP Rate](https://img.shields.io/badge/FP_Rate-Reduced_v0.3.1-brightgreen)](benchmarks/false-positives/RESULTS.md)
+[![Detection rules](https://img.shields.io/badge/Detection_rules-150%2B-brightgreen)](https://oxvault.dev/docs/rules)
+[![CVE corpus](https://img.shields.io/badge/CVE_corpus-12_reproduced-brightgreen)](testdata/cve/)
+[![Docs](https://img.shields.io/badge/Docs-oxvault.dev-blue)](https://oxvault.dev/docs)
 [![Discord](https://img.shields.io/discord/1353688988539187200?color=7289da&label=Discord&logo=discord&logoColor=white)](https://discord.gg/mysvyvHCX5)
 
 </div>
@@ -19,17 +20,22 @@
 
 Every artifact your AI agent loads is untrusted code or data. **MCP servers** execute code on your machine. **ML model pickles** are arbitrary Python execution by design — `torch.load("model.pt")` is functionally `eval()`. **RAG documents** carry indirect prompt injection through retrieval. Oxvault catches all three before they load.
 
-**v0.3 (shipped):** MCP server scanning — 141 servers scanned, 50% had HIGH+ findings, 12/12 CVEs detected, 93% precision.
+150+ detection rules across source code, tool descriptions, dependencies, install hooks, and model artifacts.
 
-**v0.4 (shipping):** AIBOM — pickle opcode disassembly (no execution), ONNX protobuf validation, safetensors header checks, OpenSSF Model Signing verification, model card poisoning detection.
+**v0.3 (shipped):** MCP server scanning — reproduces and detects 12 published MCP CVEs in our test corpus.
+
+**v0.4 (shipped):** model scanning — pickle opcode disassembly (no execution), ONNX protobuf validation, safetensors header checks, OpenSSF Model Signing verification, model card poisoning detection.
 
 **v0.5 (planned):** RAG corpus scanning — same poisoning engine on indexed documents.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/oxvault/scanner/main/scripts/install.sh | sh
+curl -fsSL https://oxvault.dev/install.sh | sh
 oxvault scan github:user/mcp-server      # MCP server
-oxvault scan ./model.pkl                 # ML model artifact (v0.4)
+oxvault scan ./model.pkl                 # ML model artifact
+oxvault scan hf:org/model                # Hugging Face model
 ```
+
+Full documentation: [oxvault.dev/docs](https://oxvault.dev/docs).
 
 ---
 
@@ -38,9 +44,10 @@ oxvault scan ./model.pkl                 # ML model artifact (v0.4)
 - [What It Catches](#what-it-catches) - SAST, credentials, tool poisoning, supply chain, SSRF, model artifacts
 - [Quick Start](#quick-start) - install and scan in seconds
 - [Examples](#examples) - scan output, rug pulls, install hooks, CI/CD, confidence filtering
-- [Model Artifact Scanning (v0.4)](#model-artifact-scanning-v04) - pickle, ONNX, safetensors, signatures
+- [Model Artifact Scanning](#model-artifacts-v04--aibom) - pickle, ONNX, safetensors, signatures
 - [CLI Options](#all-cli-options) - all flags and commands
-- [Real-World Results](#real-world-scan-results) - 141 servers scanned, 50% had HIGH+ findings
+- [Platform Upload](#platform-upload) - `oxvault push` and `oxvault agent`
+- [Real-World Results](#real-world-scan-results) - latest ecosystem sweep
 - [Benchmarks](#benchmarks) - CVE detection, false positive rate, competitive comparison
 - [GitHub Action](#github-action) - `oxvault/scan-action@v1` for CI/CD
 - [Community](#community) - Discord, issues, contributing
@@ -49,8 +56,8 @@ oxvault scan ./model.pkl                 # ML model artifact (v0.4)
 
 ## Why Oxvault
 
-- **12/12 known MCP CVEs detected** - [validated against real vulnerabilities](testdata/cve/)
-- **141 servers scanned, 50% had HIGH+ findings** - [real-world validation](#real-world-scan-results)
+- **12 published MCP CVEs reproduced and detected** - [validated against a real CVE corpus](testdata/cve/)
+- **150+ detection rules** - source SAST, tool poisoning, dependencies, install hooks, and model artifacts
 - **Confidence scoring** - every finding rated high/medium/low, filter with `--min-confidence`
 - **Single binary, zero dependencies** - install and run in seconds
 - **CWE references on every finding** - enterprise-grade reporting
@@ -128,16 +135,19 @@ oxvault scan ./model.pkl                 # ML model artifact (v0.4)
 | **Untrusted signature issuer** | OIDC issuer not in configured trusted-issuer list (self-declared in v0.4) | CWE-347 |
 | **Malformed sigstore bundle** | `.sigstore` file missing all spec-shaped top-level keys (mediaType, messageSignature, verificationMaterial, dsseEnvelope) | CWE-345 |
 
-> **v0.4 trust posture:** signature verification is **hash-only**. The manifest's issuer field is **self-declared** by whoever wrote the manifest — the v0.4 verifier does NOT cryptographically prove who signed. v0.4.1 adds Rekor/Fulcio chain verification and a separate `aibom-signature-clean` rule for fully-verified provenance. v0.4 manifests with matching hashes emit `aibom-signature-hash-match` (INFO); `.sigstore` and `.sig` carriers emit `aibom-signature-presence-deferred` (INFO).
+> **v0.4 trust posture:** signature verification is **hash-only**. The manifest's issuer field is **self-declared** by whoever wrote the manifest — the verifier does NOT cryptographically prove who signed. Rekor/Fulcio chain verification and a separate `aibom-signature-clean` rule for fully-verified provenance are planned for a future release. v0.4 manifests with matching hashes emit `aibom-signature-hash-match` (INFO); `.sigstore` and `.sig` carriers emit `aibom-signature-presence-deferred` (INFO).
 
 ## Quick Start
 
 ```bash
-# Install (one-liner)
-curl -fsSL https://raw.githubusercontent.com/oxvault/scanner/main/scripts/install.sh | sh
+# Install (one-liner — detects OS/arch, verifies checksum, installs to PATH)
+curl -fsSL https://oxvault.dev/install.sh | sh
 
 # Or via Go
 go install github.com/oxvault/scanner/cmd@latest
+
+# Or grab a prebuilt binary from the releases page
+# https://github.com/oxvault/scanner/releases
 
 # Scan a local MCP server
 oxvault scan ./my-mcp-server
@@ -165,7 +175,7 @@ oxvault scan --config auto
 ```
 $ oxvault scan ./examples/vulnerable-servers/tool-poisoning --skip-manifest
 
-  ◉ Oxvault Scanner v0.1.0
+  ◉ Oxvault Scanner v0.4.0
 
   Scanning: ./examples/vulnerable-servers/tool-poisoning
 
@@ -235,7 +245,7 @@ $ oxvault scan ./examples/vulnerable-servers/malicious-postinstall --skip-manife
 # Auto-discover Claude Desktop, Cursor, VS Code, Windsurf configs
 $ oxvault scan --config auto
 
-  ◉ Oxvault Scanner v0.1.0
+  ◉ Oxvault Scanner v0.4.0
 
   Scanning: 4 servers from 2 config file(s)
 
@@ -289,7 +299,7 @@ $ oxvault scan ./server --min-confidence=high
 
 ```bash
 # Scan
-oxvault scan <target>                    # Local path, npm package, or github:user/repo
+oxvault scan <target>                    # Local path, npm package, github:user/repo, or hf:org/model
 oxvault scan --config <path|auto>        # Scan all servers from MCP config files
 oxvault scan --format <terminal|sarif|json>
 oxvault scan --fail-on <critical|high|warning|info>
@@ -298,66 +308,107 @@ oxvault scan --skip-sast                 # Skip source code analysis
 oxvault scan --skip-manifest             # Skip MCP connection + tool description scan
 oxvault scan --skip-egress               # Skip network egress detection
 oxvault scan --probe-network             # Run runtime network probe (requires strace)
+oxvault scan --show-suppressed           # Print suppressed findings in a separate section
+oxvault scan --push                      # Upload result to the platform (unreleased — see Platform Upload)
 oxvault scan --no-color                  # Disable colored output
 oxvault scan -v                          # Verbose logging
+
+# Model-artifact flags (skip individual validators / tune limits)
+oxvault scan --skip-pickle               # Skip pickle opcode disassembler
+oxvault scan --skip-onnx                 # Skip ONNX validator
+oxvault scan --skip-safetensors          # Skip safetensors validator
+oxvault scan --skip-modelcard            # Skip model card checker
+oxvault scan --skip-signature            # Skip signature verifier
+oxvault scan --trusted-issuers <csv>     # Replace default OIDC trusted-issuer allowlist
+oxvault scan --additional-trusted-issuers <csv>  # Merge with default allowlist
+
+# Hugging Face targets
+oxvault scan hf:org/model                # Materialize an HF repo and scan it
+oxvault scan hf:org/model --hf-revision <branch|sha>
+oxvault scan hf:org/model --hf-token <token>     # or env HF_TOKEN
 
 # Pin & Check (rug pull detection) — use -- before commands with flags
 oxvault pin -- <command> [args...]        # Save tool description hashes
 oxvault check -- <command> [args...]      # Compare against saved hashes
+
+# Platform (hosted) — UNRELEASED: not in the v0.4.0 install.sh binary; see Platform Upload below
+oxvault init                              # Write ~/.oxvault/config.toml
+oxvault push                              # Upload the most recent scan
+oxvault agent                             # Long-poll the platform and run queued scans locally
 ```
+
+## Platform Upload
+
+> **Unreleased.** `oxvault init`, `oxvault push`, `oxvault agent`, and `oxvault scan --push`
+> are **not** in the current released binary (v0.4.0, what `install.sh` gives you). They land
+> in **v0.4.1** — until then they are available only when building from source
+> (`go install github.com/oxvault/scanner/cmd@latest`). Everything else in this README works
+> in the v0.4.0 release.
+
+The scanner is a standalone offline tool — no account is required to scan. If you use the
+hosted [Oxvault platform](https://platform.oxvault.dev), you can upload results to track
+findings over time and across a team.
+
+```bash
+# One-time: write a config skeleton to ~/.oxvault/config.toml
+oxvault init
+
+# Mint a workspace API key at https://platform.oxvault.dev/settings/api-keys
+export OXVAULT_API_KEY=ox_...
+
+# Scan and upload in one step
+oxvault scan ./my-mcp-server --push
+
+# Or upload the most recent local scan without re-running
+oxvault push
+
+# Run a worker that long-polls the platform for queued scan jobs and runs them locally
+oxvault agent
+```
+
+API keys are workspace-scoped and always start with the `ox_` prefix. The platform base URL
+defaults to `https://platform.oxvault.dev` and can be overridden with `--api-url` or
+`$OXVAULT_API_URL`. Set `[push].auto = true` in `~/.oxvault/config.toml` to make interactive
+scans push by default. See [oxvault.dev/docs/cli](https://oxvault.dev/docs/cli) for the full reference.
 
 ## Benchmarks
 
 | Metric | Result |
 |---|---|
-| **CVE detection rate** | [12/12 (100%)](testdata/cve/) - validated against real MCP CVEs |
-| **Real-world scan** | [141 servers scanned, 50% had HIGH+ findings, 135 confirmed CRITICALs](#real-world-scan-results) |
-| **False positive rate** | [Significantly reduced in v0.3.1](benchmarks/false-positives/RESULTS.md) |
+| **CVE corpus** | [12 published MCP CVEs reproduced and detected](testdata/cve/) |
+| **Real-world sweep** | [112 artifacts (33 MCP servers + 79 HF models), 3 critical / 8 high](#real-world-scan-results) |
+| **False positive rate** | [Measured against a known-clean corpus](benchmarks/false-positives/RESULTS.md) |
 | **DVMCP challenge detection** | [31 findings across 8/10 challenges](benchmarks/competitive/RESULTS.md) |
 | **vs. competitors** | [Feature comparison with mcp-scan, Snyk, Enkrypt, Cisco](benchmarks/competitive/RESULTS.md) |
 
 ## Real-World Scan Results
 
-We scanned **141 real MCP servers** from the ecosystem — including official, enterprise, and community servers — using v0.3.2:
+Our most recent public sweep covered **112 artifacts across the AI supply chain — 33 MCP servers and 79 Hugging Face models**:
 
 | Metric | Result |
 |---|---|
-| **Servers scanned** | 141 (AWS, Cloudflare, Microsoft, Stripe, Trigger.dev, Context7, Activepieces, etc.) |
-| **Servers with HIGH+ findings** | 71 (50%) |
-| **Confirmed CRITICALs** | 135 across 37 servers (93% precision — near-zero false positives) |
-| **Total findings** | 3,925 (145 CRITICAL · 472 HIGH · 1,162 WARNING · 2,146 INFO) |
-| **Clean servers** | 54 (E2B, Qdrant, Elasticsearch, Weaviate, MCP SDKs, and more) |
+| **Artifacts scanned** | 112 (33 MCP servers + 79 HF models) |
+| **Critical findings** | 3 |
+| **High findings** | 8 |
+| **Coverage** | Official, enterprise, and community MCP servers plus popular HF model repos |
 
-### Notable findings on real servers
+The sweep spans both artifact classes the scanner covers today: MCP servers (source SAST, tool
+poisoning, dependencies, install hooks) and ML models (pickle opcode disassembly, safetensors,
+ONNX, model cards, signatures).
 
-| Server | Severity | What was found |
-|---|---|---|
-| **Activepieces** | CRITICAL | 33 findings — command injection, hardcoded AWS keys, private key material |
-| **mcp-chrome** | CRITICAL | 13 findings — `new Function(code)` dynamic code execution |
-| **Desktop Commander** | CRITICAL | 11 findings — command injection, hardcoded secrets, malicious install hooks |
-| **Cloudflare MCP** | CRITICAL | Hardcoded live Bearer token in source |
-| **AWS MCP** (`awslabs/mcp`) | CRITICAL | `exec()` in sandbox runner, `os.system()`, `os.popen()` |
-| **Context7 MCP** (`upstash/context7`) | CRITICAL | SSRF bypass — `startsWith()` IP check on full URL instead of hostname |
-| **Microsoft MCP** | CRITICAL | `execSync` with template literal — `npm install ${packageName}` |
-| **Trigger.dev** | CRITICAL | `execSync` with unsanitized URL, hardcoded secrets |
-| **agentgateway** | CRITICAL | Private key material embedded in source |
-| **Klavis AI** | CRITICAL | Code eval + SSRF broken check |
+### Representative real-world detections
 
-### Findings by category (HIGH + CRITICAL)
+Classes of issues the scanner surfaces on real, public MCP servers and model repos:
 
-| Category | Count | Example |
-|---|---|---|
-| Command injection | 472 | `execSync`, `os.system()`, `subprocess(shell=True)` |
-| Code evaluation | 145 | `exec()`, `new Function()`, `eval()` |
-| Path traversal | 35 | `startsWith()` containment bypass, concatenated paths |
-| SSRF / broken IP checks | 23 | `startsWith("10.")` on full URLs |
-| Hardcoded credentials | 13 | AWS keys, Bearer tokens, private keys |
+| Class | What it looks like |
+|---|---|
+| Command injection | `execSync`/`os.system()`/`subprocess(shell=True)` on unsanitized input |
+| Code evaluation | `exec()`, `new Function(code)`, `eval()` in tool handlers |
+| Hardcoded credentials | AWS keys, Bearer tokens, and private key material committed to source |
+| SSRF / broken IP checks | `startsWith()` containment checks run on a full URL instead of the hostname |
+| Pickle RCE | `os.system` / `subprocess` reachable via GLOBAL/REDUCE in a model pickle |
 
-### Clean servers (0 findings)
-
-54 servers had zero findings, including E2B, Qdrant, Elasticsearch, Weaviate, Snyk agent-scan, FastAPI MCP, MCP SDKs (C#, Java, Go, Rust, Python, TypeScript), and many others.
-
-*Run your own scan: `oxvault scan github:owner/repo`*
+*Run your own scan: `oxvault scan github:owner/repo` or `oxvault scan hf:org/model`*
 
 ## Example Vulnerable Servers
 
