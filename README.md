@@ -339,11 +339,9 @@ oxvault agent                             # Long-poll the platform and run queue
 
 ## Platform Upload
 
-> **Unreleased.** `oxvault init`, `oxvault push`, `oxvault agent`, and `oxvault scan --push`
-> are **not** in the current released binary (v0.4.0, what `install.sh` gives you). They land
-> in **v0.4.1** — until then they are available only when building from source
-> (`go install github.com/oxvault/scanner/cmd@latest`). Everything else in this README works
-> in the v0.4.0 release.
+> Requires scanner **v0.4.1+**. `oxvault init`, `oxvault push`, `oxvault agent`, and
+> `oxvault scan --push` are not present in v0.4.0 or older binaries — re-run the installer
+> (`curl -fsSL https://oxvault.dev/install.sh | sh`) to get the latest release.
 
 The scanner is a standalone offline tool — no account is required to scan. If you use the
 hosted [Oxvault platform](https://platform.oxvault.dev), you can upload results to track
