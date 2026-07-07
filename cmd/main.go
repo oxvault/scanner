@@ -89,6 +89,7 @@ func main() {
 		newPushCmd(),
 		newInitCmd(),
 		newAgentCmd(),
+		newUpgradeCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
