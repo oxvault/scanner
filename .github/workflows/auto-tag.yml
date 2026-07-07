@@ -3,13 +3,15 @@ name: Auto Tag
 # Tags every merge to main, then release.yml (triggered by the tag push)
 # cuts a real GitHub Release + GoReleaser build + Homebrew formula update.
 #
-# Bump rule (Conventional Commits on the merge commit's subject line):
+# Scans every commit new since the last tag (not just HEAD — a push can
+# carry several commits, e.g. a feat: followed by a ci: cleanup) and takes
+# the highest bump among them (Conventional Commits on each subject line):
 #   type!: or "BREAKING CHANGE" in the body -> major
 #   feat: / feat(scope):                    -> minor
 #   anything else                           -> patch (default)
 #
-# docs:/test:/ci: commits are skipped entirely — no tag, no release. This
-# mirrors the changelog exclude filters in .goreleaser.yaml.
+# Tagging is skipped only if EVERY new commit is docs:/test:/ci: — mirrors
+# the changelog exclude filters in .goreleaser.yaml.
 on:
   push:
     branches: [main]
@@ -19,10 +21,6 @@ permissions:
 
 jobs:
   tag:
-    if: >-
-      !startsWith(github.event.head_commit.message, 'docs:') &&
-      !startsWith(github.event.head_commit.message, 'test:') &&
-      !startsWith(github.event.head_commit.message, 'ci:')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -35,28 +33,56 @@ jobs:
           set -e
 
           LATEST_TAG="$(git tag --list 'v*.*.*' | sort -V | tail -1)"
-          LATEST_TAG="${LATEST_TAG:-v0.0.0}"
-          VERSION="${LATEST_TAG#v}"
+          if [ -z "$LATEST_TAG" ]; then
+            RANGE="HEAD"
+            VERSION="0.0.0"
+          else
+            RANGE="${LATEST_TAG}..HEAD"
+            VERSION="${LATEST_TAG#v}"
+          fi
 
           MAJOR="$(echo "$VERSION" | cut -d. -f1)"
           MINOR="$(echo "$VERSION" | cut -d. -f2)"
           PATCH="$(echo "$VERSION" | cut -d. -f3)"
 
-          MSG="$(git log -1 --pretty=%B)"
+          BUMP="skip"
+          for sha in $(git log "$RANGE" --pretty=format:%H); do
+            SUBJECT="$(git log -1 --pretty=%s "$sha")"
+            BODY="$(git log -1 --pretty=%B "$sha")"
 
-          if echo "$MSG" | grep -qE '^[a-zA-Z]+(\([^)]*\))?!:' || echo "$MSG" | grep -q 'BREAKING CHANGE'; then
-            MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
-          elif echo "$MSG" | grep -qE '^feat(\([^)]*\))?:'; then
-            MINOR=$((MINOR + 1)); PATCH=0
-          else
-            PATCH=$((PATCH + 1))
+            if echo "$SUBJECT" | grep -qE '^(docs|test|ci)(\([^)]*\))?:'; then
+              continue
+            fi
+
+            if echo "$SUBJECT" | grep -qE '^[a-zA-Z]+(\([^)]*\))?!:' || echo "$BODY" | grep -q 'BREAKING CHANGE'; then
+              BUMP="major"
+              break
+            elif echo "$SUBJECT" | grep -qE '^feat(\([^)]*\))?:'; then
+              [ "$BUMP" = "major" ] || BUMP="minor"
+            else
+              [ "$BUMP" = "skip" ] && BUMP="patch"
+            fi
+          done
+
+          if [ "$BUMP" = "skip" ]; then
+            echo "All commits since ${LATEST_TAG:-<none>} are docs/test/ci — skipping tag."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
+          case "$BUMP" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+
           NEW_TAG="v${MAJOR}.${MINOR}.${PATCH}"
-          echo "Latest: $LATEST_TAG -> New: $NEW_TAG"
+          echo "Latest: ${LATEST_TAG:-<none>} -> New: $NEW_TAG (bump: $BUMP)"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
           echo "tag=$NEW_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Create and push tag
+        if: steps.version.outputs.skip != 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
