@@ -74,3 +74,28 @@ func Load() (*Config, error) {
 	}
 	return cfg, nil
 }
+
+// Save writes cfg to disk at Path() as TOML, creating the parent directory
+// if needed.
+//
+// The directory is created 0700 and the file 0600: [push].api_key holds a
+// workspace secret ("ox_...") and must not be readable by other local
+// accounts. Callers that want to preserve unrelated existing settings should
+// Load first, mutate, then Save.
+func Save(cfg *Config) error {
+	p, err := Path()
+	if err != nil {
+		return err
+	}
+	data, err := toml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("userconfig: marshal config: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return fmt.Errorf("userconfig: create config dir: %w", err)
+	}
+	if err := os.WriteFile(p, data, 0o600); err != nil {
+		return fmt.Errorf("userconfig: write %s: %w", p, err)
+	}
+	return nil
+}

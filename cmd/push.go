@@ -17,6 +17,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// defaultAPIURL / defaultConsoleURL are the shared platform fallbacks used by
+// `push`, `login`, and `init` when no flag, env var, or config value is set.
+// Defined once here so the subcommands never drift apart.
+const (
+	defaultAPIURL     = "https://platform.oxvault.dev"
+	defaultConsoleURL = "https://console.oxvault.dev"
+)
+
 // newPushCmd builds `oxvault push` — uploads the most recent local scan to
 // the Oxvault platform. Source of truth is ~/.oxvault/last-scan.json,
 // written by `oxvault scan` after every successful run.
@@ -96,7 +104,7 @@ func runPushFlow(scan *lastscan.File, apiKey, apiURL, consoleURL string, quiet b
 		apiURL = uc.Push.APIURL
 	}
 	if apiURL == "" {
-		apiURL = "https://platform.oxvault.dev"
+		apiURL = defaultAPIURL
 	}
 
 	if consoleURL == "" {
