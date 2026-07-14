@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -359,8 +360,17 @@ func (a *agentLoop) resolveTarget(job *pendingJob) (string, error) {
 		return "", err
 	}
 
+	// Explicit --target-map entry always wins (lets the user pin a remote
+	// name to a local checkout for offline-mode rescans).
 	if t, ok := a.targets[name]; ok {
 		return t, nil
+	}
+
+	// Remote-scheme artifacts skip the local-filesystem probe entirely —
+	// the scanner's own resolver handles them (npm install, HF download,
+	// git clone). Pass the name through verbatim.
+	if isRemoteSchemeTarget(name) {
+		return name, nil
 	}
 
 	cwd, err := os.Getwd()
@@ -381,10 +391,35 @@ func (a *agentLoop) resolveTarget(job *pendingJob) (string, error) {
 	)
 }
 
+// isRemoteSchemeTarget reports whether the artifact name should be passed
+// straight to the scanner's resolver instead of looked up on the local
+// filesystem. Covers npm packages (`@scope/pkg` and bare names with a slash
+// like `org/pkg`), HuggingFace (`hf:org/model`), and GitHub (`github:user/repo`).
+// Bare npm names without a slash (e.g. `playwright`) still go through the
+// local-FS probe first — the resolver falls back to npm if not found.
+func isRemoteSchemeTarget(name string) bool {
+	if strings.HasPrefix(name, "hf:") ||
+		strings.HasPrefix(name, "github:") ||
+		strings.HasPrefix(name, "@") {
+		return true
+	}
+	// Bare-form `org/pkg` (e.g. `mcpotato/42-eicar-street`). Match the npm
+	// package naming charset on both sides of a single slash so malformed
+	// pseudo-schemes like `:foo/bar` or `foo/bar/baz` don't get classified
+	// as remote and incorrectly handed to the scanner's npm/HF resolver.
+	return barePackageRe.MatchString(name)
+}
+
+// barePackageRe matches `<segment>/<segment>` where each segment is one or
+// more npm-safe characters (alphanumeric, dot, underscore, hyphen). One
+// slash exactly, no leading/trailing slash, no colons or other weirdness.
+var barePackageRe = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`)
+
 // validateArtifactName rejects names that could escape cwd when joined
 // to it (path traversal). The agent never trusts the platform's name
-// blindly — see resolveTarget. Tested with names from real CLI corpora
-// (mcp-server, @scope/pkg, hf:org/model resolved to "model").
+// blindly — see resolveTarget. Allows scheme-style names that the
+// scanner's resolver handles (hf:org/model, @scope/pkg, github:user/repo)
+// while still rejecting path-traversal patterns.
 func validateArtifactName(name string) error {
 	if name == "" {
 		return fmt.Errorf("artifact name is empty")
@@ -392,12 +427,18 @@ func validateArtifactName(name string) error {
 	if strings.HasPrefix(name, ".") {
 		return fmt.Errorf("artifact name %q starts with '.'", name)
 	}
-	if strings.ContainsAny(name, "/\\") {
-		return fmt.Errorf("artifact name %q contains path separator", name)
+	if strings.HasPrefix(name, "/") {
+		return fmt.Errorf("artifact name %q is an absolute path", name)
+	}
+	if strings.ContainsAny(name, "\\") {
+		return fmt.Errorf("artifact name %q contains backslash", name)
 	}
 	if strings.Contains(name, "..") {
 		return fmt.Errorf("artifact name %q contains '..'", name)
 	}
+	// Forward slashes are allowed (HF, npm-scoped, github scheme all use
+	// them) — but only via the remote-scheme branch in resolveTarget;
+	// they never get joined to cwd for a filesystem probe.
 	return nil
 }
 
