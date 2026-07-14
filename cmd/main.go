@@ -86,6 +86,7 @@ func main() {
 		newScanCmd(),
 		newPinCmd(),
 		newCheckCmd(),
+		newLoginCmd(),
 		newPushCmd(),
 		newInitCmd(),
 		newAgentCmd(),
