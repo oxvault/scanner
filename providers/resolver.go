@@ -6,9 +6,25 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 )
+
+// gitHubRepoURL builds the HTTPS clone URL for an owner/repo. It is a package
+// variable so tests can point it at a local bare repository and remain
+// hermetic (no real network / github access).
+var gitHubRepoURL = func(owner, repo string) string {
+	return fmt.Sprintf("https://github.com/%s/%s.git", owner, repo)
+}
+
+// githubTarget is the parsed form of a `github:` scan target.
+type githubTarget struct {
+	owner   string // repository owner / org
+	repo    string // repository name
+	subpath string // optional sub-directory to scan (cleaned, "" when absent)
+	ref     string // optional branch or tag (@ref), "" when absent
+}
 
 type resolver struct {
 	logger *slog.Logger
@@ -135,31 +151,197 @@ func (r *resolver) resolveNPM(packageName string) (*ResolvedPackage, error) {
 }
 
 func (r *resolver) resolveGitHub(target string) (*ResolvedPackage, error) {
-	repo := strings.TrimPrefix(target, "github:")
-	r.logger.Info("cloning GitHub repo", "repo", repo)
+	gt, err := parseGitHubTarget(target)
+	if err != nil {
+		return nil, err
+	}
+
+	r.logger.Info("cloning GitHub repo",
+		"owner", gt.owner,
+		"repo", gt.repo,
+		"subpath", gt.subpath,
+		"ref", gt.ref,
+	)
 
 	tmpDir, err := os.MkdirTemp("", "oxvault-scan-*")
 	if err != nil {
 		return nil, fmt.Errorf("create temp dir: %w", err)
 	}
 
-	url := fmt.Sprintf("https://github.com/%s.git", repo)
-	cmd := exec.Command("git", "clone", "--depth", "1", url, tmpDir)
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("git clone %s: %w", repo, err)
+	scanPath, err := r.cloneGitHub(tmpDir, gt)
+	if err != nil {
+		return nil, err
 	}
 
-	lang := detectProjectLanguage(tmpDir)
-	command, args := detectServerCommand(tmpDir, lang)
+	lang := detectProjectLanguage(scanPath)
+	command, args := detectServerCommand(scanPath, lang)
+
+	// Name reflects what is actually scanned: the repo, or the sub-directory
+	// when a subpath was requested.
+	name := gt.repo
+	if gt.subpath != "" {
+		name = filepath.Base(gt.subpath)
+	}
 
 	return &ResolvedPackage{
-		Path:     tmpDir,
+		Path:     scanPath,
 		Command:  command,
 		Args:     args,
 		Language: lang,
-		Name:     filepath.Base(repo),
+		Name:     name,
 	}, nil
+}
+
+// cloneGitHub clones gt into tmpDir and returns the local path that should be
+// scanned. With no subpath it performs a plain shallow clone of the whole repo
+// (unchanged legacy behaviour). With a subpath it attempts a blobless sparse
+// checkout so only that directory is fetched, falling back to a full shallow
+// clone when the installed git lacks sparse-checkout support.
+func (r *resolver) cloneGitHub(tmpDir string, gt githubTarget) (string, error) {
+	url := gitHubRepoURL(gt.owner, gt.repo)
+
+	if gt.subpath == "" {
+		if err := r.gitClone(tmpDir, url, gt.ref); err != nil {
+			return "", fmt.Errorf("git clone %s/%s: %w", gt.owner, gt.repo, err)
+		}
+		return tmpDir, nil
+	}
+
+	if err := r.gitSparseClone(tmpDir, url, gt); err != nil {
+		// Older git (< 2.25) lacks --sparse / sparse-checkout. Fall back to a
+		// full shallow clone and simply point at the subpath afterwards.
+		r.logger.Warn("sparse checkout unavailable; falling back to full clone",
+			"error", err)
+		if rmErr := os.RemoveAll(tmpDir); rmErr != nil {
+			return "", fmt.Errorf("clean failed sparse clone: %w", rmErr)
+		}
+		if mkErr := os.MkdirAll(tmpDir, 0o755); mkErr != nil {
+			return "", fmt.Errorf("recreate temp dir: %w", mkErr)
+		}
+		if cloneErr := r.gitClone(tmpDir, url, gt.ref); cloneErr != nil {
+			return "", fmt.Errorf("git clone %s/%s: %w", gt.owner, gt.repo, cloneErr)
+		}
+	}
+
+	scanPath := filepath.Join(tmpDir, filepath.FromSlash(gt.subpath))
+	if _, err := os.Stat(scanPath); err != nil {
+		return "", fmt.Errorf("subpath %q not found in %s/%s: %w",
+			gt.subpath, gt.owner, gt.repo, err)
+	}
+	return scanPath, nil
+}
+
+// gitClone performs a plain shallow clone of url into tmpDir, optionally
+// checking out a specific branch or tag ref.
+func (r *resolver) gitClone(tmpDir, url, ref string) error {
+	args := []string{"clone", "--depth", "1"}
+	if ref != "" {
+		args = append(args, "--branch", ref)
+	}
+	args = append(args, url, tmpDir)
+
+	cmd := exec.Command("git", args...)
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// gitSparseClone performs a blobless sparse checkout that fetches only gt.subpath:
+//
+//	git clone --depth 1 --filter=blob:none --sparse <url> <tmpDir>
+//	git -C <tmpDir> sparse-checkout set <subpath>
+//
+// It returns an error (leaving tmpDir for the caller to clean) when the
+// installed git does not support sparse checkout, so the caller can fall back.
+func (r *resolver) gitSparseClone(tmpDir, url string, gt githubTarget) error {
+	cloneArgs := []string{"clone", "--depth", "1", "--filter=blob:none", "--sparse"}
+	if gt.ref != "" {
+		cloneArgs = append(cloneArgs, "--branch", gt.ref)
+	}
+	cloneArgs = append(cloneArgs, url, tmpDir)
+
+	clone := exec.Command("git", cloneArgs...)
+	clone.Stderr = os.Stderr
+	if err := clone.Run(); err != nil {
+		return fmt.Errorf("sparse clone: %w", err)
+	}
+
+	set := exec.Command("git", "-C", tmpDir, "sparse-checkout", "set", gt.subpath)
+	set.Stderr = os.Stderr
+	if err := set.Run(); err != nil {
+		return fmt.Errorf("sparse-checkout set %q: %w", gt.subpath, err)
+	}
+	return nil
+}
+
+// parseGitHubTarget parses a `github:` target into its owner, repo, optional
+// subpath and optional @ref. Accepted forms:
+//
+//	github:owner/repo
+//	github:owner/repo/sub/dir
+//	github:owner/repo@ref
+//	github:owner/repo/sub/dir@ref
+//
+// The subpath is validated to reject absolute paths and `..` traversal so a
+// target can never escape the cloned repository root.
+func parseGitHubTarget(target string) (githubTarget, error) {
+	raw := strings.TrimPrefix(target, "github:")
+
+	// Optional @ref suffix: everything after the first '@'. owner/repo/subpath
+	// components never legitimately contain '@'.
+	var ref string
+	if at := strings.Index(raw, "@"); at >= 0 {
+		ref = raw[at+1:]
+		raw = raw[:at]
+		if ref == "" {
+			return githubTarget{}, fmt.Errorf("invalid github target %q: empty ref after '@'", target)
+		}
+	}
+
+	raw = strings.Trim(raw, "/")
+	if raw == "" {
+		return githubTarget{}, fmt.Errorf("invalid github target %q: missing owner/repo", target)
+	}
+
+	parts := strings.Split(raw, "/")
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+		return githubTarget{}, fmt.Errorf("invalid github target %q: expected owner/repo", target)
+	}
+
+	gt := githubTarget{owner: parts[0], repo: parts[1], ref: ref}
+
+	if len(parts) > 2 {
+		subpath, err := validateSubpath(strings.Join(parts[2:], "/"))
+		if err != nil {
+			return githubTarget{}, fmt.Errorf("invalid github target %q: %w", target, err)
+		}
+		gt.subpath = subpath
+	}
+
+	return gt, nil
+}
+
+// validateSubpath rejects absolute paths and any `..` segment, then returns a
+// cleaned, forward-slash relative path safe to join against the clone root.
+func validateSubpath(subpath string) (string, error) {
+	if strings.HasPrefix(subpath, "/") || filepath.IsAbs(subpath) {
+		return "", fmt.Errorf("subpath %q must be relative to the repository root", subpath)
+	}
+	for _, seg := range strings.Split(subpath, "/") {
+		if seg == ".." {
+			return "", fmt.Errorf("subpath %q must not contain '..' segments", subpath)
+		}
+		// A leading '-' would let git interpret the segment as a flag when it
+		// is passed to `sparse-checkout set`. No shell is involved (argv, not a
+		// shell string), so this is defence-in-depth against argument injection.
+		if strings.HasPrefix(seg, "-") {
+			return "", fmt.Errorf("subpath %q must not contain a segment starting with '-'", subpath)
+		}
+	}
+	cleaned := path.Clean(subpath)
+	if cleaned == "." || cleaned == "" {
+		return "", fmt.Errorf("subpath %q is empty", subpath)
+	}
+	return cleaned, nil
 }
 
 func isLocalPath(target string) bool {
