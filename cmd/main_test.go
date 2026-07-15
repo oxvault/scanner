@@ -61,10 +61,7 @@ func TestSplitAndTrimCSV(t *testing.T) {
 	}
 }
 
-// TestDeriveArtifactName pins the scan-target → artifact-name mapping. The
-// name is the (workspace_id, name) upsert key AND the target the agent
-// re-resolves on rescan, so remote-scheme targets MUST keep their scheme —
-// stripping "github:" made owner/repo/subpath look local and broke rescans.
+// TestDeriveArtifactName: remote-scheme targets keep their scheme (it's the agent's rescan key); local paths reduce to basename.
 func TestDeriveArtifactName(t *testing.T) {
 	tests := map[string]string{
 		"github:oxvault/scanner": "github:oxvault/scanner",
