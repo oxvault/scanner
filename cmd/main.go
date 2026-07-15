@@ -56,9 +56,12 @@ func artifactTypeFor(pkg *providers.ResolvedPackage) string {
 func deriveArtifactName(target string) string {
 	t := strings.TrimSpace(target)
 	switch {
-	case strings.HasPrefix(t, "github:"):
-		return strings.TrimPrefix(t, "github:")
-	case strings.HasPrefix(t, "@") || strings.HasPrefix(t, "hf:"):
+	// Remote-scheme targets keep their scheme: the name is both the
+	// (workspace_id, name) upsert key AND the target the agent re-resolves on
+	// rescan. Stripping "github:" made the agent see a bare "owner/repo/subpath"
+	// and treat it as a local path (isRemoteSchemeTarget only matches the
+	// github: prefix or a single-slash bare pkg) — so remote rescans failed.
+	case strings.HasPrefix(t, "github:") || strings.HasPrefix(t, "hf:") || strings.HasPrefix(t, "@"):
 		return t
 	default:
 		return filepath.Base(filepath.Clean(t))
