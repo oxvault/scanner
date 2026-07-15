@@ -295,6 +295,13 @@ func parseGitHubTarget(target string) (githubTarget, error) {
 		if ref == "" {
 			return githubTarget{}, fmt.Errorf("invalid github target %q: empty ref after '@'", target)
 		}
+		// A leading '-' would let git interpret the ref as a flag if the
+		// `--branch <ref>` argv ordering ever changed (e.g. --upload-pack).
+		// ref is always passed as --branch's value today, but reject it for
+		// parity with validateSubpath — defence-in-depth against arg injection.
+		if strings.HasPrefix(ref, "-") {
+			return githubTarget{}, fmt.Errorf("invalid github target %q: ref must not start with '-'", target)
+		}
 	}
 
 	raw = strings.Trim(raw, "/")
