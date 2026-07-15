@@ -74,7 +74,7 @@ var version = iversion.Version
 func main() {
 	root := &cobra.Command{
 		Use:     "oxvault",
-		Short:   "MCP security scanner — detect vulnerabilities in AI tool integrations",
+		Short:   "Security scanner for the AI supply chain — MCP servers, ML models & more",
 		Version: version,
 		Run: func(cmd *cobra.Command, args []string) {
 			printLogo()
@@ -108,7 +108,7 @@ func printLogo() {
 		bold.Sprint("Oxvault Scanner"),
 		dim.Sprint(version))
 	fmt.Fprintf(os.Stderr, "  %s\n\n",
-		dim.Sprint("MCP security scanner — detect vulnerabilities in AI tool integrations"))
+		dim.Sprint("Security scanner for the AI supply chain — MCP servers, ML models & more"))
 }
 
 // printProgress writes a styled progress line to stderr.
