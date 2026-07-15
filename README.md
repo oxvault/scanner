@@ -30,7 +30,8 @@ Every artifact your AI agent loads is untrusted code or data. **MCP servers** ex
 
 ```bash
 curl -fsSL https://oxvault.dev/install.sh | sh
-oxvault scan github:user/mcp-server      # MCP server
+oxvault scan github:user/mcp-server      # MCP server (whole repo)
+oxvault scan github:user/repo/path/to/server  # sub-directory only (sparse)
 oxvault scan ./model.pkl                 # ML model artifact
 oxvault scan hf:org/model                # Hugging Face model
 ```

@@ -211,6 +211,7 @@ Targets:
   ./my-server                    Local project directory or file
   @company/mcp-server            npm package (downloaded to temp dir)
   github:user/repo               GitHub repository (cloned)
+  github:user/repo/sub/dir       GitHub sub-directory (sparse-fetched)
 
 Config-based scanning:
   --config ~/.claude/claude_desktop_config.json   Scan all servers in a config file

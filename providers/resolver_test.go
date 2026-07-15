@@ -3,7 +3,9 @@ package providers
 import (
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -474,6 +476,255 @@ func TestResolve_GitHubPrefix_ReturnsError(t *testing.T) {
 	// We expect an error because git clone will fail
 	if err == nil {
 		t.Error("expected error for invalid GitHub repo (no network or nonexistent)")
+	}
+}
+
+// ── parseGitHubTarget ─────────────────────────────────────────────────────────
+
+func TestParseGitHubTarget(t *testing.T) {
+	tests := []struct {
+		name        string
+		target      string
+		wantErr     bool
+		wantOwner   string
+		wantRepo    string
+		wantSubpath string
+		wantRef     string
+	}{
+		{
+			name:      "repo only",
+			target:    "github:oxvault/scanner",
+			wantOwner: "oxvault", wantRepo: "scanner",
+		},
+		{
+			name:      "repo only trailing slash",
+			target:    "github:oxvault/scanner/",
+			wantOwner: "oxvault", wantRepo: "scanner",
+		},
+		{
+			name:        "repo with subpath",
+			target:      "github:oxvault/scanner/examples/vulnerable-servers/tool-poisoning",
+			wantOwner:   "oxvault",
+			wantRepo:    "scanner",
+			wantSubpath: "examples/vulnerable-servers/tool-poisoning",
+		},
+		{
+			name:      "subpath trailing slash normalised",
+			target:    "github:oxvault/scanner/examples/foo/",
+			wantOwner: "oxvault", wantRepo: "scanner",
+			wantSubpath: "examples/foo",
+		},
+		{
+			name:      "repo with ref",
+			target:    "github:oxvault/scanner@v1.2.3",
+			wantOwner: "oxvault", wantRepo: "scanner", wantRef: "v1.2.3",
+		},
+		{
+			name:      "repo with subpath and ref",
+			target:    "github:oxvault/scanner/examples/foo@main",
+			wantOwner: "oxvault", wantRepo: "scanner",
+			wantSubpath: "examples/foo", wantRef: "main",
+		},
+		{
+			name:    "traversal rejected",
+			target:  "github:oxvault/scanner/../secret",
+			wantErr: true,
+		},
+		{
+			name:    "nested traversal rejected",
+			target:  "github:oxvault/scanner/examples/../../etc/passwd",
+			wantErr: true,
+		},
+		{
+			name:    "absolute subpath rejected",
+			target:  "github:oxvault/scanner//etc/passwd",
+			wantErr: true,
+		},
+		{
+			name:    "missing repo",
+			target:  "github:oxvault",
+			wantErr: true,
+		},
+		{
+			name:    "empty target",
+			target:  "github:",
+			wantErr: true,
+		},
+		{
+			name:    "empty ref",
+			target:  "github:oxvault/scanner@",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gt, err := parseGitHubTarget(tt.target)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("parseGitHubTarget(%q) = %+v, want error", tt.target, gt)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseGitHubTarget(%q) unexpected error: %v", tt.target, err)
+			}
+			if gt.owner != tt.wantOwner {
+				t.Errorf("owner = %q, want %q", gt.owner, tt.wantOwner)
+			}
+			if gt.repo != tt.wantRepo {
+				t.Errorf("repo = %q, want %q", gt.repo, tt.wantRepo)
+			}
+			if gt.subpath != tt.wantSubpath {
+				t.Errorf("subpath = %q, want %q", gt.subpath, tt.wantSubpath)
+			}
+			if gt.ref != tt.wantRef {
+				t.Errorf("ref = %q, want %q", gt.ref, tt.wantRef)
+			}
+		})
+	}
+}
+
+func TestValidateSubpath_Traversal(t *testing.T) {
+	bad := []string{
+		"..",
+		"../etc",
+		"a/../../b",
+		"/etc/passwd",
+		"", // becomes "." after clean
+		".",
+		"-flag",            // leading dash could be read as a git flag
+		"examples/-inject", // leading-dash segment mid-path
+	}
+	for _, sp := range bad {
+		t.Run(sp, func(t *testing.T) {
+			if _, err := validateSubpath(sp); err == nil {
+				t.Errorf("validateSubpath(%q) = nil error, want rejection", sp)
+			}
+		})
+	}
+}
+
+func TestResolve_GitHubSubpathTraversal_NoClone(t *testing.T) {
+	// A traversal target must be rejected during parsing, before any git clone
+	// is attempted. This is fully hermetic (no git / network required).
+	r := newResolver(t)
+	_, err := r.Resolve("github:oxvault/scanner/../secret")
+	if err == nil {
+		t.Fatal("expected error for traversal subpath")
+	}
+	if !strings.Contains(err.Error(), "..") {
+		t.Errorf("expected error to mention '..', got %v", err)
+	}
+}
+
+// ── Resolve — github sparse checkout (hermetic, local git repo) ───────────────
+
+// makeLocalGitRepo builds a real git repository on disk with the given files
+// (map of forward-slash relative path → contents) and returns its path. Tests
+// point gitHubRepoURL at this via a file:// URL so no network is used.
+func makeLocalGitRepo(t *testing.T, files map[string]string) string {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available; skipping sparse-checkout integration test")
+	}
+
+	dir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@example.com",
+			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@example.com",
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+
+	git("init", "-b", "main")
+	for rel, content := range files {
+		full := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git("add", "-A")
+	git("commit", "-m", "initial")
+	return dir
+}
+
+func TestResolve_GitHubSubpath_SparseCheckout(t *testing.T) {
+	src := makeLocalGitRepo(t, map[string]string{
+		"README.md":                         "# root",
+		"examples/foo/requirements.txt":     "fastmcp",
+		"examples/foo/server.py":            "# target server",
+		"examples/bar/other.txt":            "sibling that must NOT be fetched",
+		"examples/bar/should_not_exist.txt": "x",
+	})
+
+	orig := gitHubRepoURL
+	t.Cleanup(func() { gitHubRepoURL = orig })
+	gitHubRepoURL = func(owner, repo string) string { return "file://" + src }
+
+	r := newResolver(t)
+	pkg, err := r.Resolve("github:oxvault/scanner/examples/foo")
+	if err != nil {
+		t.Fatalf("Resolve subpath error: %v", err)
+	}
+
+	// Path must point into the requested subpath.
+	if base := filepath.Base(pkg.Path); base != "foo" {
+		t.Errorf("expected Path to end in /foo, got %q", pkg.Path)
+	}
+	if !strings.HasSuffix(filepath.ToSlash(pkg.Path), "examples/foo") {
+		t.Errorf("expected Path to end in examples/foo, got %q", pkg.Path)
+	}
+
+	// The subpath's contents must be present...
+	if _, err := os.Stat(filepath.Join(pkg.Path, "server.py")); err != nil {
+		t.Errorf("expected server.py checked out in subpath: %v", err)
+	}
+	// ...and language detection must have run against the subpath.
+	if pkg.Language != LangPython {
+		t.Errorf("expected LangPython (from subpath requirements.txt), got %v", pkg.Language)
+	}
+	if pkg.Command != "python3" {
+		t.Errorf("expected Command=python3, got %q", pkg.Command)
+	}
+	if pkg.Name != "foo" {
+		t.Errorf("expected Name=foo, got %q", pkg.Name)
+	}
+
+	// Sparse checkout must NOT have materialised the sibling directory — this
+	// is what proves only the subpath was fetched rather than the whole tree.
+	cloneRoot := filepath.Dir(filepath.Dir(pkg.Path)) // <tmp> (parent of examples/)
+	if _, err := os.Stat(filepath.Join(cloneRoot, "examples", "bar", "other.txt")); !os.IsNotExist(err) {
+		t.Errorf("sibling examples/bar/other.txt should not be checked out (sparse), stat err = %v", err)
+	}
+}
+
+func TestResolve_GitHubSubpath_Missing(t *testing.T) {
+	src := makeLocalGitRepo(t, map[string]string{
+		"README.md":              "# root",
+		"examples/foo/server.py": "# server",
+	})
+
+	orig := gitHubRepoURL
+	t.Cleanup(func() { gitHubRepoURL = orig })
+	gitHubRepoURL = func(owner, repo string) string { return "file://" + src }
+
+	r := newResolver(t)
+	_, err := r.Resolve("github:oxvault/scanner/examples/does-not-exist")
+	if err == nil {
+		t.Fatal("expected error for non-existent subpath")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("expected 'not found' error, got %v", err)
 	}
 }
 
