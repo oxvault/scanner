@@ -56,9 +56,8 @@ func artifactTypeFor(pkg *providers.ResolvedPackage) string {
 func deriveArtifactName(target string) string {
 	t := strings.TrimSpace(target)
 	switch {
-	case strings.HasPrefix(t, "github:"):
-		return strings.TrimPrefix(t, "github:")
-	case strings.HasPrefix(t, "@") || strings.HasPrefix(t, "hf:"):
+	// Keep the scheme — the name is the agent's rescan target; stripping "github:" made it look local and broke remote rescans.
+	case strings.HasPrefix(t, "github:") || strings.HasPrefix(t, "hf:") || strings.HasPrefix(t, "@"):
 		return t
 	default:
 		return filepath.Base(filepath.Clean(t))

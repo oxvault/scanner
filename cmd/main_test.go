@@ -60,3 +60,21 @@ func TestSplitAndTrimCSV(t *testing.T) {
 		})
 	}
 }
+
+// TestDeriveArtifactName: remote-scheme targets keep their scheme (it's the agent's rescan key); local paths reduce to basename.
+func TestDeriveArtifactName(t *testing.T) {
+	tests := map[string]string{
+		"github:oxvault/scanner": "github:oxvault/scanner",
+		"github:oxvault/scanner/examples/vulnerable-servers/tool-poisoning": "github:oxvault/scanner/examples/vulnerable-servers/tool-poisoning",
+		"github:owner/repo@v1.2.3": "github:owner/repo@v1.2.3",
+		"hf:org/model":             "hf:org/model",
+		"@company/mcp-server":      "@company/mcp-server",
+		"./node_modules/asana-mcp": "asana-mcp",
+		"/tmp/models/model.pkl":    "model.pkl",
+	}
+	for target, want := range tests {
+		if got := deriveArtifactName(target); got != want {
+			t.Errorf("deriveArtifactName(%q) = %q; want %q", target, got, want)
+		}
+	}
+}
