@@ -3,6 +3,7 @@ package engines
 import (
 	"fmt"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/oxvault/scanner/providers"
@@ -127,6 +128,16 @@ func (s *scanner) Scan(target string, opts ScanOptions) (*ScanReport, error) {
 		return nil, fmt.Errorf("resolve: %w", err)
 	}
 	report.Package = pkg
+
+	// Remote resolvers stage the artifact in a temp dir — remove it on return
+	// so untrusted code isn't left on disk. Local paths / HF cache: no TempDir.
+	if pkg.TempDir != "" {
+		defer func() {
+			if rmErr := os.RemoveAll(pkg.TempDir); rmErr != nil {
+				s.logger.Warn("failed to remove scan temp dir", "dir", pkg.TempDir, "error", rmErr)
+			}
+		}()
+	}
 
 	// AIBOM dispatch — model artifacts and model directories run through
 	// the AIBOMComposer instead of the MCP-server pipeline. MCP-server

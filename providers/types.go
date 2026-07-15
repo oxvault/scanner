@@ -147,6 +147,9 @@ type ResolvedPackage struct {
 	Language Language // Detected primary language
 	Name     string   // Package name
 	Version  string   // Package version
+	// TempDir: resolver-created temp dir the caller removes after scanning
+	// (github/npm). Empty for local paths + HF cache — never removed.
+	TempDir string
 	// Kind classifies the package. The zero value is treated as KindMCPServer
 	// for backwards-compatibility with pre-AIBOM call sites.
 	Kind PackageKind

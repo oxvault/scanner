@@ -4,6 +4,8 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -1317,5 +1319,40 @@ func TestScanner_ProbeNetwork_SkippedWhenNoCommand(t *testing.T) {
 	if probe.CallCount.Load() != 0 {
 		t.Errorf("probe should not be called when pkg.Command is empty, got %d calls",
 			probe.CallCount.Load())
+	}
+}
+
+// Remote scan's TempDir is removed after the scan.
+func TestScanner_Scan_RemovesTempDir(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "clone")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	resolver := &testutil.MockResolver{ResolveResult: &providers.ResolvedPackage{
+		Path: dir, TempDir: dir, Kind: providers.KindMCPServer,
+	}}
+	eng := newTestScanner(resolver, &testutil.MockMCPClient{}, &testutil.MockRuleMatcher{},
+		&testutil.MockSASTAnalyzer{}, &testutil.MockReporter{})
+
+	_, _ = eng.Scan("github:o/r", ScanOptions{SkipSAST: true, SkipDepAudit: true, SkipManifest: true, SkipEgress: true})
+
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Errorf("temp dir %q not removed after scan (stat err: %v)", dir, err)
+	}
+}
+
+// Local target (no TempDir) is never deleted.
+func TestScanner_Scan_KeepsLocalPath(t *testing.T) {
+	dir := t.TempDir()
+	resolver := &testutil.MockResolver{ResolveResult: &providers.ResolvedPackage{
+		Path: dir, TempDir: "", Kind: providers.KindMCPServer,
+	}}
+	eng := newTestScanner(resolver, &testutil.MockMCPClient{}, &testutil.MockRuleMatcher{},
+		&testutil.MockSASTAnalyzer{}, &testutil.MockReporter{})
+
+	_, _ = eng.Scan("./local", ScanOptions{SkipSAST: true, SkipDepAudit: true, SkipManifest: true, SkipEgress: true})
+
+	if _, err := os.Stat(dir); err != nil {
+		t.Errorf("local path %q was removed (must not be): %v", dir, err)
 	}
 }
