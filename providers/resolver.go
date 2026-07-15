@@ -147,6 +147,7 @@ func (r *resolver) resolveNPM(packageName string) (*ResolvedPackage, error) {
 		Args:     []string{"-y", packageName},
 		Language: LangJavaScript,
 		Name:     packageName,
+		TempDir:  tmpDir,
 	}, nil
 }
 
@@ -189,6 +190,7 @@ func (r *resolver) resolveGitHub(target string) (*ResolvedPackage, error) {
 		Args:     args,
 		Language: lang,
 		Name:     name,
+		TempDir:  tmpDir,
 	}, nil
 }
 
