@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 )
 
 // MCPServerConfig holds the configuration for a single MCP server entry
@@ -22,6 +24,12 @@ type MCPServerConfig struct {
 	// Env is the environment variables to set for the process
 	Env map[string]string `json:"env"`
 
+	// Transport is "" / "stdio" for command servers, "http" / "sse" for remote.
+	Transport string
+
+	// URL is the endpoint for http/sse transports (empty for stdio servers).
+	URL string
+
 	// Source is the config file this server was loaded from
 	Source string
 }
@@ -30,12 +38,18 @@ type MCPServerConfig struct {
 // The outer object may contain extra fields (e.g. globalShortcut) which we ignore.
 type mcpClientConfig struct {
 	MCPServers map[string]mcpServerEntry `json:"mcpServers"`
+	// Projects holds Claude Code's per-project sections (~/.claude.json).
+	Projects map[string]struct {
+		MCPServers map[string]mcpServerEntry `json:"mcpServers"`
+	} `json:"projects"`
 }
 
 type mcpServerEntry struct {
 	Command string            `json:"command"`
 	Args    []string          `json:"args"`
 	Env     map[string]string `json:"env"`
+	Type    string            `json:"type"`
+	URL     string            `json:"url"`
 }
 
 // knownConfigPaths returns the canonical list of MCP client config file paths
@@ -49,18 +63,35 @@ func knownConfigPaths() []string {
 	}
 
 	return []string{
-		// Claude Desktop
-		filepath.Join(home, ".claude", "claude_desktop_config.json"),
-		// Claude Code
-		filepath.Join(home, ".claude", "claude_code_config.json"),
-		// Cursor
+		// Claude Code — global + project-scoped servers (nested structure).
+		filepath.Join(home, ".claude.json"),
+		// Claude Code — project-shared config (cwd-relative).
+		".mcp.json",
+		// Claude Desktop — OS-specific application-support location.
+		claudeDesktopConfigPath(home),
+		// Cursor — global + project (cwd-relative).
 		filepath.Join(home, ".cursor", "mcp.json"),
-		// VS Code (user-level)
+		filepath.Join(".cursor", "mcp.json"),
+		// VS Code — user-level + workspace (cwd-relative).
 		filepath.Join(home, ".vscode", "mcp.json"),
-		// VS Code (workspace-level — resolved relative to cwd)
 		filepath.Join(".vscode", "mcp.json"),
-		// Windsurf / Codeium
+		// Windsurf / Codeium.
 		filepath.Join(home, ".codeium", "windsurf", "mcp_config.json"),
+	}
+}
+
+// claudeDesktopConfigPath returns the OS-specific Claude Desktop config location.
+func claudeDesktopConfigPath(home string) string {
+	switch runtime.GOOS {
+	case "darwin":
+		return filepath.Join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json")
+	case "windows":
+		if appData := os.Getenv("APPDATA"); appData != "" {
+			return filepath.Join(appData, "Claude", "claude_desktop_config.json")
+		}
+		return filepath.Join(home, "AppData", "Roaming", "Claude", "claude_desktop_config.json")
+	default: // linux + other unix
+		return filepath.Join(home, ".config", "Claude", "claude_desktop_config.json")
 	}
 }
 
@@ -83,14 +114,22 @@ func ParseConfigFile(path string) ([]MCPServerConfig, error) {
 	}
 
 	servers := make([]MCPServerConfig, 0, len(raw.MCPServers))
-	for name, entry := range raw.MCPServers {
-		servers = append(servers, MCPServerConfig{
-			Name:    name,
-			Command: entry.Command,
-			Args:    entry.Args,
-			Env:     entry.Env,
-			Source:  path,
-		})
+	collect := func(m map[string]mcpServerEntry) {
+		for name, entry := range m {
+			servers = append(servers, MCPServerConfig{
+				Name:      name,
+				Command:   entry.Command,
+				Args:      entry.Args,
+				Env:       entry.Env,
+				Transport: entry.Type,
+				URL:       entry.URL,
+				Source:    path,
+			})
+		}
+	}
+	collect(raw.MCPServers)
+	for _, proj := range raw.Projects {
+		collect(proj.MCPServers)
 	}
 
 	return servers, nil
@@ -133,6 +172,7 @@ func discoverOne(path string) (*DiscoverResult, error) {
 
 func discoverAll() (*DiscoverResult, error) {
 	result := &DiscoverResult{}
+	seen := make(map[string]bool) // dedup a server that appears in several files
 
 	for _, candidate := range knownConfigPaths() {
 		servers, err := ParseConfigFile(candidate)
@@ -140,13 +180,26 @@ func discoverAll() (*DiscoverResult, error) {
 			// Malformed JSON is a real error — surface it.
 			return nil, err
 		}
-		if len(servers) == 0 {
-			continue
-		}
 
-		result.SourceFiles = append(result.SourceFiles, candidate)
-		result.Servers = append(result.Servers, servers...)
+		added := 0
+		for _, srv := range servers {
+			key := serverIdentity(srv)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			result.Servers = append(result.Servers, srv)
+			added++
+		}
+		if added > 0 {
+			result.SourceFiles = append(result.SourceFiles, candidate)
+		}
 	}
 
 	return result, nil
+}
+
+// serverIdentity keys a server by command + args + url for dedup.
+func serverIdentity(s MCPServerConfig) string {
+	return s.Command + "\x00" + strings.Join(s.Args, "\x00") + "\x00" + s.URL
 }

@@ -79,6 +79,38 @@ func TestParseConfigFile_HappyPath(t *testing.T) {
 	}
 }
 
+func TestParseConfigFile_NestedProjectServers(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".claude.json")
+	// Claude Code layout: global servers in mcpServers, project-scoped under projects[path].
+	raw := `{
+		"mcpServers": {"context7": {"command": "npx", "args": ["-y", "context7"]}},
+		"projects": {
+			"/home/me/proj": {"mcpServers": {"proj-db": {"command": "python3", "args": ["db.py"]}}}
+		}
+	}`
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	servers, err := ParseConfigFile(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(servers) != 2 {
+		t.Fatalf("expected 2 servers (global + project), got %d", len(servers))
+	}
+	names := map[string]bool{}
+	for _, s := range servers {
+		names[s.Name] = true
+	}
+	for _, want := range []string{"context7", "proj-db"} {
+		if !names[want] {
+			t.Errorf("expected server %q, got %v", want, names)
+		}
+	}
+}
+
 func TestParseConfigFile_MissingFile_ReturnsNilNoError(t *testing.T) {
 	servers, err := ParseConfigFile("/nonexistent/path/config.json")
 	if err != nil {
@@ -225,12 +257,8 @@ func TestDiscover_Auto_FindsFilesInKnownLocations(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 
-	// Create .claude dir and a desktop config
-	claudeDir := filepath.Join(dir, ".claude")
-	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeConfigFile(t, claudeDir, "claude_desktop_config.json", map[string]mcpServerEntry{
+	// Claude Code global config (~/.claude.json).
+	writeConfigFile(t, dir, ".claude.json", map[string]mcpServerEntry{
 		"fs":     {Command: "npx", Args: []string{"-y", "mcp-fs"}},
 		"github": {Command: "npx", Args: []string{"-y", "mcp-github"}},
 	})
@@ -269,6 +297,31 @@ func TestDiscover_Auto_FindsFilesInKnownLocations(t *testing.T) {
 	}
 }
 
+func TestDiscover_Auto_DedupsIdenticalServers(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	// Same server (identical command+args) in Claude Code global + Cursor global.
+	writeConfigFile(t, dir, ".claude.json", map[string]mcpServerEntry{
+		"context7": {Command: "npx", Args: []string{"-y", "context7"}},
+	})
+	cursorDir := filepath.Join(dir, ".cursor")
+	if err := os.MkdirAll(cursorDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeConfigFile(t, cursorDir, "mcp.json", map[string]mcpServerEntry{
+		"context7-dup": {Command: "npx", Args: []string{"-y", "context7"}},
+	})
+
+	result, err := Discover("auto")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Servers) != 1 {
+		t.Errorf("expected 1 server after dedup, got %d: %v", len(result.Servers), result.Servers)
+	}
+}
+
 func TestDiscover_Auto_NoConfigsPresent_ReturnsEmpty(t *testing.T) {
 	// Point HOME at an empty temp directory — no known config files exist.
 	dir := t.TempDir()
@@ -290,13 +343,9 @@ func TestDiscover_Auto_MalformedFile_ReturnsError(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 
-	claudeDir := filepath.Join(dir, ".claude")
-	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	// Write malformed JSON to a known config path
+	// Write malformed JSON to a known config path (Claude Code global).
 	if err := os.WriteFile(
-		filepath.Join(claudeDir, "claude_desktop_config.json"),
+		filepath.Join(dir, ".claude.json"),
 		[]byte(`{broken`),
 		0o600,
 	); err != nil {
@@ -313,12 +362,8 @@ func TestDiscover_Auto_SkipsEmptyConfigFiles(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 
-	// Create a config with no servers
-	claudeDir := filepath.Join(dir, ".claude")
-	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeConfigFile(t, claudeDir, "claude_desktop_config.json", map[string]mcpServerEntry{})
+	// Create a config with no servers (Claude Code global).
+	writeConfigFile(t, dir, ".claude.json", map[string]mcpServerEntry{})
 
 	// Create a config with servers
 	cursorDir := filepath.Join(dir, ".cursor")
@@ -366,10 +411,24 @@ func TestKnownConfigPaths_ContainsClaudeDesktop(t *testing.T) {
 	}
 
 	paths := knownConfigPaths()
-	want := filepath.Join(home, ".claude", "claude_desktop_config.json")
+	want := claudeDesktopConfigPath(home)
 
 	if !slices.Contains(paths, want) {
 		t.Errorf("expected Claude Desktop config path %q in known paths, got %v", want, paths)
+	}
+}
+
+func TestKnownConfigPaths_ContainsClaudeCode(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("cannot determine home directory")
+	}
+
+	paths := knownConfigPaths()
+	want := filepath.Join(home, ".claude.json")
+
+	if !slices.Contains(paths, want) {
+		t.Errorf("expected Claude Code config path %q in known paths, got %v", want, paths)
 	}
 }
 
