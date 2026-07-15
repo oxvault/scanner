@@ -203,22 +203,28 @@ func newScanCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "scan [target]",
-		Short: "Scan an MCP server for security vulnerabilities",
-		Long: `Scan an MCP server project, npm package, or GitHub repo for security vulnerabilities.
+		Short: "Scan MCP servers and AI model artifacts for security vulnerabilities",
+		Long: `Scan MCP servers, npm packages, GitHub repos, or ML model artifacts for
+security vulnerabilities.
+
+Run with no target to scan every MCP server already installed on this machine
+(Claude Code, Claude Desktop, Cursor, VS Code, Windsurf) — same as --config auto.
 
 Targets:
+  (none)                         Auto-detect and scan all installed MCP servers
   ./my-server                    Local project directory or file
   @company/mcp-server            npm package (downloaded to temp dir)
   github:user/repo               GitHub repository (cloned)
   github:user/repo/sub/dir       GitHub sub-directory (sparse-fetched)
 
 Config-based scanning:
-  --config ~/.claude/claude_desktop_config.json   Scan all servers in a config file
-  --config auto                                   Auto-detect all known MCP config files`,
+  --config <path>                Scan all servers in a specific config file
+  --config auto                  Auto-detect all known MCP config files`,
 		Args: cobra.RangeArgs(0, 1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// No target and no --config: scan everything already installed.
 			if configPath == "" && len(args) == 0 {
-				return fmt.Errorf("provide a scan target or --config flag\n\nRun 'oxvault scan --help' for usage")
+				configPath = "auto"
 			}
 
 			cfg := config.DefaultConfig()
@@ -327,7 +333,7 @@ Config-based scanning:
 	cmd.Flags().BoolVar(&skipEgress, "skip-egress", false, "Skip network egress detection")
 	cmd.Flags().BoolVar(&probeNetwork, "probe-network", false, "Spawn server and monitor outbound connections (requires strace on Linux)")
 	cmd.Flags().BoolVar(&noColor, "no-color", false, "Disable color output (for CI or piping)")
-	cmd.Flags().StringVar(&configPath, "config", "", "MCP client config file to scan (path or \"auto\")")
+	cmd.Flags().StringVar(&configPath, "config", "", "MCP client config file to scan (path or \"auto\"; auto is the default when no target is given)")
 	cmd.Flags().BoolVar(&showSuppressed, "show-suppressed", false, "Print suppressed findings in a separate section")
 
 	// HF resolver flags (v0.4 AIBOM)
@@ -548,7 +554,13 @@ func runConfigScan(application *app.App, cfg *config.Config, opts engines.ScanOp
 	}
 
 	if len(result.Servers) == 0 {
-		fmt.Fprintf(os.Stderr, "  No MCP servers found in config.\n")
+		if configPath == "auto" {
+			fmt.Fprintf(os.Stderr, "  No installed MCP servers found.\n\n"+
+				"  Point at a target directly:  oxvault scan github:user/repo\n"+
+				"  Or a specific config file:   oxvault scan --config <path>\n")
+		} else {
+			fmt.Fprintf(os.Stderr, "  No MCP servers found in config.\n")
+		}
 		return nil
 	}
 
@@ -574,6 +586,21 @@ func runConfigScan(application *app.App, cfg *config.Config, opts engines.ScanOp
 	anyFailed := false
 
 	for _, srv := range result.Servers {
+		// Remote (http/sse) servers expose only a URL — nothing local to scan.
+		if srv.Command == "" {
+			if cfg.OutputFormat == providers.FormatTerminal {
+				transport := srv.Transport
+				if transport == "" {
+					transport = "remote"
+				}
+				fmt.Fprintf(os.Stderr, "  %s %s %s\n\n",
+					color.New(color.FgYellow).Sprint("──"),
+					color.New(color.Bold).Sprint(srv.Name),
+					color.New(color.Faint).Sprintf("(%s transport — static scan not applicable)", transport))
+			}
+			continue
+		}
+
 		startedAt := time.Now().UTC()
 		// Build the target string that the resolver understands.
 		// For config-defined servers the command IS the target — we pass it
